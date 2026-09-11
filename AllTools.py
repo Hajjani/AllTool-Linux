@@ -12,6 +12,7 @@ import requests, re
 import json
 import signal
 from packaging import version
+from Tools.uninstaller import uninstall
 LOCAL_PATH = "~/bin/AllTool.py"
 
 
@@ -20,7 +21,7 @@ def uncon():
         "Are you sure you want to uninstall AllTool? This action cannot be undone. (yes/no):"
     )
     if confirm.lower() == "yes" or confirm.lower() == "y" or confirm.lower() == "":
-        un()
+        uninstall()
     elif confirm.lower() == "no" or confirm.lower() == "n":
         sun()
     else:
@@ -33,22 +34,11 @@ def con():
         "Are you sure you want to uninstall AllTool? This action cannot be undone. (yes/no):"
     )
     if confirm.lower() == "yes" or confirm.lower() == "y" or confirm.lower() == "":
-        un()
+        uninstall()
     elif confirm.lower() == "no" or confirm.lower() == "n":
         sun()
     else:
         con()
-
-
-def un():
-    print("Uninstalling AllTool...")
-    try:
-        os.remove(LOCAL_PATH)
-        print("✅ AllTool has been uninstalled successfully.")
-    except FileNotFoundError:
-        print("❌ AllTool is not installed.")
-    except Exception as e:
-        print(f"❌ Error during uninstallation: {e}")
 
 
 def sun():
