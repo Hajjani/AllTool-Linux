@@ -21,7 +21,7 @@ def uncon():
         "Are you sure you want to uninstall AllTool? This action cannot be undone. (yes/no):"
     )
     if confirm.lower() == "yes" or confirm.lower() == "y" or confirm.lower() == "":
-        uninstall()
+        uninstall(LOCAL_PATH)
     elif confirm.lower() == "no" or confirm.lower() == "n":
         sun()
     else:
@@ -34,7 +34,7 @@ def con():
         "Are you sure you want to uninstall AllTool? This action cannot be undone. (yes/no):"
     )
     if confirm.lower() == "yes" or confirm.lower() == "y" or confirm.lower() == "":
-        uninstall()
+        uninstall(LOCAL_PATH)
     elif confirm.lower() == "no" or confirm.lower() == "n":
         sun()
     else:
