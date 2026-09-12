@@ -38,7 +38,7 @@ jobs:
             exit 1
           fi
 
-          echo "Secret loaded successfully."
+          echo "Downloading clone statistics..."
 
           curl --fail-with-body --show-error \
             -H "Accept: application/vnd.github+json" \
@@ -49,7 +49,7 @@ jobs:
 
           test -s data/clones.json
 
-      - name: Create or update PNG graphs
+      - name: Create dark-background PNG graphs
         run: |
           python <<'PY'
           import json
@@ -68,9 +68,14 @@ jobs:
           os.makedirs("assets", exist_ok=True)
 
           def create_graph(values, title, filename, color):
-              plt.figure(figsize=(12, 6))
+              figure, axis = plt.subplots(figsize=(12, 6))
 
-              plt.plot(
+              background_color = "#181818"
+
+              figure.patch.set_facecolor(background_color)
+              axis.set_facecolor(background_color)
+
+              axis.plot(
                   dates,
                   values,
                   marker="o",
@@ -78,20 +83,40 @@ jobs:
                   color=color
               )
 
-              plt.title(title)
-              plt.xlabel("Date")
-              plt.ylabel("Number of clones")
-              plt.xticks(rotation=45)
-              plt.grid(True, alpha=0.3)
-              plt.tight_layout()
+              axis.set_title(title, color="white")
+              axis.set_xlabel("Date", color="white")
+              axis.set_ylabel("Number of clones", color="white")
 
-              plt.savefig(
-                  filename,
-                  dpi=150,
-                  bbox_inches="tight"
+              axis.tick_params(
+                  axis="x",
+                  colors="white",
+                  labelrotation=45
               )
 
-              plt.close()
+              axis.tick_params(
+                  axis="y",
+                  colors="white"
+              )
+
+              for spine in axis.spines.values():
+                  spine.set_color("#555555")
+
+              axis.grid(
+                  True,
+                  color="#555555",
+                  alpha=0.5
+              )
+
+              figure.tight_layout()
+
+              figure.savefig(
+                  filename,
+                  dpi=150,
+                  bbox_inches="tight",
+                  facecolor=figure.get_facecolor()
+              )
+
+              plt.close(figure)
 
           create_graph(
               total_clones,
