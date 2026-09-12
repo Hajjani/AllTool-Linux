@@ -71,7 +71,7 @@ install_packages() {
                 make git gcc python3-pip pkg-config \
                 mpv ffmpeg yt-dlp speedtest-cli inxi power-profiles-daemon \
                 python3 python3-pip nodejs ruby php java-latest-openjdk gcc-c++ \
-                python3-requests python3-beautifulsoup4
+                python3-requests python3-beautifulsoup4 python3-packaging
             ;;
         *)
             echo "⚠️  Unknown distro, skipping system package installation"
@@ -80,10 +80,6 @@ install_packages() {
 }
 
 install_packages
-
-# Install Python packages
-echo "🐍 Installing Python packages..."
-python3 -m pip install --user requests beautifulsoup4 packaging
 
 # Check external commands (warn only)
 echo "🔍 Checking external commands..."
