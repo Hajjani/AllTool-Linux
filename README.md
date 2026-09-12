@@ -11,9 +11,9 @@ curl -fsSL https://raw.githubusercontent.com/Hajjani/AllTool-Linux/refs/heads/St
 <img width="1035" height="835" alt="AllTool-Linux screenshot" src="https://github.com/user-attachments/assets/93438892-d83d-4df9-9c08-b29e1a5f42f6" />
 
 # Growth of the project
-<img width="1200" height="512" alt="Clones in last 14 days" src="https://github.com/user-attachments/assets/d2c4c10c-5216-4b90-be68-3d4111b6d080" />
+![Total clones](assets/clones_traffic.png)
 
-<img width="1200" height="512" alt="Unique cloners in last 14 days" src="https://github.com/user-attachments/assets/c0529fee-cdcf-4b0a-874a-94e47b47f866" />
+![Unique clones](assets/unique_clones_traffic.png)
 
 [Get the full data](https://github.com/Hajjani/AllTool-Linux/pulse)
 
