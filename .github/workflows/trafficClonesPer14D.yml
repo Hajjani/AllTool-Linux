@@ -1,90 +1,113 @@
-name: Test clone traffic token
+name: Update clone traffic graphs
 
 on:
+  schedule:
+    - cron: "0 0 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  test-token:
+  update-clone-graphs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test GitHub token and traffic API
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install matplotlib
+        run: pip install matplotlib
+      - name: Download clone statistics
         env:
           CLONES_TOKEN: ${{ secrets.tafic_updater }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
 
-          if [ -z "${CLONES_TOKEN:-}" ]; then
-            echo "FAIL: tafic_updater secret is empty or unavailable."
+          if [ -z "$CLONES_TOKEN" ]; then
+            echo "The tafic_updater secret is missing or unavailable."
             exit 1
           fi
 
-          echo "Secret is loaded."
-          echo "Repository: ${REPOSITORY}"
+          echo "Secret loaded successfully."
 
-          echo
-          echo "Testing token authentication..."
-
-          USER_STATUS=$(curl -sS \
-            -o /tmp/user-response.json \
-            -w "%{http_code}" \
+          curl --fail-with-body --show-error --verbose \
             -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer ${CLONES_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/user")
+            "https://api.github.com/repos/${REPOSITORY}/traffic/clones" \
+            -o data/clones.json
 
-          echo "Authentication HTTP status: ${USER_STATUS}"
 
-          if [ "${USER_STATUS}" != "200" ]; then
-            echo "FAIL: GitHub rejected the token."
-            cat /tmp/user-response.json
-            exit 1
-          fi
+      - name: Create or update PNG graphs
+        run: |
+          python <<'PY'
+          import json
+          import os
+          import matplotlib.pyplot as plt
 
-          echo "Token authentication succeeded."
+          with open("data/clones.json", "r") as file:
+              data = json.load(file)
 
-          echo
-          echo "Testing repository access..."
+          clone_data = data.get("clones", [])
 
-          REPOSITORY_STATUS=$(curl -sS \
-            -o /tmp/repository-response.json \
-            -w "%{http_code}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${CLONES_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPOSITORY}")
+          dates = [item["timestamp"][:10] for item in clone_data]
+          total_clones = [item["count"] for item in clone_data]
+          unique_clones = [item["uniques"] for item in clone_data]
 
-          echo "Repository HTTP status: ${REPOSITORY_STATUS}"
+          os.makedirs("assets", exist_ok=True)
 
-          if [ "${REPOSITORY_STATUS}" != "200" ]; then
-            echo "FAIL: Token cannot access ${REPOSITORY}."
-            cat /tmp/repository-response.json
-            exit 1
-          fi
+          def create_graph(values, title, filename, color):
+              plt.figure(figsize=(12, 6))
 
-          echo "Repository access succeeded."
+              plt.plot(
+                  dates,
+                  values,
+                  marker="o",
+                  linewidth=2,
+                  color=color
+              )
 
-          echo
-          echo "Testing clone traffic access..."
+              plt.title(title)
+              plt.xlabel("Date")
+              plt.ylabel("Number of clones")
+              plt.xticks(rotation=45)
+              plt.grid(True, alpha=0.3)
+              plt.tight_layout()
 
-          TRAFFIC_STATUS=$(curl -sS \
-            -o /tmp/traffic-response.json \
-            -w "%{http_code}" \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${CLONES_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${REPOSITORY}/traffic/clones")
+              plt.savefig(
+                  filename,
+                  dpi=150,
+                  bbox_inches="tight"
+              )
 
-          echo "Traffic API HTTP status: ${TRAFFIC_STATUS}"
+              plt.close()
 
-          if [ "${TRAFFIC_STATUS}" != "200" ]; then
-            echo "FAIL: Token cannot access clone traffic."
-            cat /tmp/traffic-response.json
-            exit 1
-          fi
+          create_graph(
+              total_clones,
+              "Repository Clones - Last 14 Days",
+              "assets/clones_traffic.png",
+              "#2ea44f"
+          )
 
-          echo "SUCCESS: Token, repository access, and clone traffic access all work."
+          create_graph(
+              unique_clones,
+              "Unique Clones - Last 14 Days",
+              "assets/unique_clones_traffic.png",
+              "#0969da"
+          )
+          PY
+
+      - name: Commit or update graph files
+        uses: EndBug/add-and-commit@v9
+        with:
+          add: |
+            assets/clones_traffic.png
+            assets/unique_clones_traffic.png
+          message: "Update clone traffic graphs"
