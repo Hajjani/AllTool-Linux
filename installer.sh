@@ -30,43 +30,189 @@ detect_distro() {
 DISTRO=$(detect_distro)
 echo "📦 Detected distro: $DISTRO"
 
-# Install system packages
+# --- Optional package selection ------------------------------------------
+# Core packages are always installed (required). Every optional package is
+# offered individually — nothing optional is installed without consent,
+# unless -y/--yes is passed.
+#
+# Usage: ./installer.sh [-y|--yes] [--no-optional|--minimal] [-h|--help]
+INSTALL_ALL_OPTIONAL=false
+SKIP_OPTIONAL=false
+for arg in "$@"; do
+    case "$arg" in
+        -y|--yes) INSTALL_ALL_OPTIONAL=true ;;
+        --no-optional|--minimal) SKIP_OPTIONAL=true ;;
+        -h|--help)
+            echo "Usage: $0 [-y|--yes] [--no-optional|--minimal]"
+            echo ""
+            echo "  -y, --yes          install all optional packages without asking"
+            echo "  --no-optional      skip all optional packages without asking"
+            echo "  --minimal          alias of --no-optional"
+            exit 0
+            ;;
+    esac
+done
+
+# ask_yes_no <prompt> [default=y|n] -> exit 0 = yes, 1 = no.
+# Auto-answers yes with -y/--yes, no with --no-optional or when stdin is
+# not interactive (piped/CI) so the installer never hangs on input.
+ask_yes_no() {
+    local prompt="$1"
+    local default="${2:-y}"
+    local hint reply
+
+    if [[ "$INSTALL_ALL_OPTIONAL" == "true" ]]; then
+        return 0
+    fi
+    if [[ "$SKIP_OPTIONAL" == "true" ]] || [[ ! -t 0 ]]; then
+        return 1
+    fi
+
+    if [[ "$default" == "y" ]]; then
+        hint="[Y/n]"
+    else
+        hint="[y/N]"
+    fi
+
+    read -r -p "$prompt $hint: " reply || reply=""
+    reply="${reply:-$default}"
+    [[ "$reply" =~ ^[Yy]$ ]]
+}
+
+# Per-distro package lists. Optional entries are "package|description".
+case "$DISTRO" in
+    debian)
+        CORE_PKGS=(make git gcc pkg-config python3 python3-pip python3-requests python3-bs4 python3-packaging)
+        OPTIONAL_PKGS=(
+            "mpv|audio/video playback (sound command)"
+            "ffmpeg|video processing (video command)"
+            "yt-dlp|download videos/audio (downloadvs command)"
+            "speedtest-cli|network speed test (netspeed command)"
+            "inxi|detailed system info (sif command)"
+            "power-profiles-daemon|power profiles (power command)"
+            "nodejs|JavaScript runtime (run .js files)"
+            "ruby|Ruby runtime (run .rb files)"
+            "php|PHP runtime (run .php files)"
+            "default-jre|Java runtime (run .jar files)"
+            "g++|C++ compiler (run .cpp files)"
+        )
+        ;;
+    arch)
+        CORE_PKGS=(make git gcc pkg-config python python-pip python-requests python-beautifulsoup4 python-packaging)
+        OPTIONAL_PKGS=(
+            "mpv|audio/video playback (sound command)"
+            "ffmpeg|video processing (video command)"
+            "yt-dlp|download videos/audio (downloadvs command)"
+            "speedtest-cli|network speed test (netspeed command)"
+            "inxi|detailed system info (sif command)"
+            "power-profiles-daemon|power profiles (power command)"
+            "nodejs|JavaScript runtime (run .js files)"
+            "ruby|Ruby runtime (run .rb files)"
+            "php|PHP runtime (run .php files)"
+            "jre-openjdk|Java runtime (run .jar files)"
+            "gcc|C++ compiler g++ (run .cpp files, already covered by core gcc)"
+        )
+        ;;
+    fedora)
+        CORE_PKGS=(make git gcc pkg-config python3 python3-pip python3-requests python3-beautifulsoup4 python3-packaging)
+        OPTIONAL_PKGS=(
+            "mpv|audio/video playback (sound command)"
+            "ffmpeg|video processing (video command)"
+            "yt-dlp|download videos/audio (downloadvs command)"
+            "speedtest-cli|network speed test (netspeed command)"
+            "inxi|detailed system info (sif command)"
+            "power-profiles-daemon|power profiles (power command)"
+            "nodejs|JavaScript runtime (run .js files)"
+            "ruby|Ruby runtime (run .rb files)"
+            "php|PHP runtime (run .php files)"
+            "java-latest-openjdk|Java runtime (run .jar files)"
+            "gcc-c++|C++ compiler (run .cpp files)"
+        )
+        ;;
+    opensuse)
+        CORE_PKGS=(make git gcc pkg-config python3 python3-pip python3-requests python3-beautifulsoup4 python3-packaging)
+        OPTIONAL_PKGS=(
+            "mpv|audio/video playback (sound command)"
+            "ffmpeg|video processing (video command)"
+            "yt-dlp|download videos/audio (downloadvs command)"
+            "speedtest-cli|network speed test (netspeed command)"
+            "inxi|detailed system info (sif command)"
+            "power-profiles-daemon|power profiles (power command)"
+            "nodejs|JavaScript runtime (run .js files)"
+            "ruby|Ruby runtime (run .rb files)"
+            "php|PHP runtime (run .php files)"
+            "java-latest-openjdk|Java runtime (run .jar files)"
+            "gcc-c++|C++ compiler (run .cpp files)"
+        )
+        ;;
+    *)
+        CORE_PKGS=()
+        OPTIONAL_PKGS=()
+        ;;
+esac
+
+# Install system packages: core automatically, optional by user choice.
 install_packages() {
+    local entry pkg desc
+    local selected=()
+
+    if [ ${#CORE_PKGS[@]} -eq 0 ]; then
+        echo "⚠️  Unknown distro, skipping system package installation"
+        return 0
+    fi
+
+    # 1. Core (required) — always installed
+    echo ""
+    echo "📥 Installing required packages: ${CORE_PKGS[*]}"
     case "$DISTRO" in
         debian)
-            echo "📥 Installing packages for Debian/Ubuntu..."
-            sudo apt update && sudo apt install -y \
-                make git gcc python3-pip pkg-config \
-                mpv ffmpeg yt-dlp speedtest-cli inxi \
-                python3 python3-pip nodejs ruby php default-jre g++ \
-                python3-requests python3-bs4
+            sudo apt update
+            sudo apt install -y "${CORE_PKGS[@]}"
             ;;
         arch)
-            echo "📥 Installing packages for Arch Linux..."
-            sudo pacman -S --noconfirm \
-                make git gcc python-pip pkg-config \
-                mpv ffmpeg yt-dlp speedtest-cli inxi \
-                python python-pip nodejs ruby php jre-openjdk gcc \
-                python-requests python-beautifulsoup4
+            sudo pacman -S --noconfirm "${CORE_PKGS[@]}"
             ;;
         fedora)
-            echo "📥 Installing packages for Fedora..."
-            sudo dnf install -y \
-                make git gcc python3-pip pkg-config \
-                mpv ffmpeg yt-dlp speedtest-cli inxi \
-                python3 python3-pip nodejs ruby php java-latest-openjdk gcc-c++ \
-                python3-requests python3-beautifulsoup4
+            sudo dnf install -y "${CORE_PKGS[@]}"
             ;;
         opensuse)
-            echo "📥 Installing packages for openSUSE..."
-            sudo zypper install -y \
-                make git gcc python3-pip pkg-config \
-                mpv ffmpeg yt-dlp speedtest-cli inxi \
-                python3 python3-pip nodejs ruby php java-latest-openjdk gcc-c++ \
-                python3-requests python3-beautifulsoup4 python3-packaging
+            sudo zypper install -y "${CORE_PKGS[@]}"
             ;;
-        *)
-            echo "⚠️  Unknown distro, skipping system package installation"
+    esac
+
+    # 2. Optional — ask for each one
+    echo ""
+    echo "🧩 Optional packages — answer Y/n for each one you want."
+    echo "   (pass -y/--yes to take all, --no-optional to skip all)"
+    for entry in "${OPTIONAL_PKGS[@]}"; do
+        pkg="${entry%%|*}"
+        desc="${entry#*|}"
+        if ask_yes_no "  Install $pkg? ($desc)" "y"; then
+            selected+=("$pkg")
+            echo "    ➕ $pkg selected"
+        fi
+    done
+
+    # 3. Install what was selected
+    if [ ${#selected[@]} -eq 0 ]; then
+        echo "ℹ️  No optional packages selected — skipping."
+        echo "   You can install them later manually; run 'alltool requirement' to see what each command needs."
+        return 0
+    fi
+    echo ""
+    echo "📥 Installing selected optional packages: ${selected[*]}"
+    case "$DISTRO" in
+        debian)
+            sudo apt install -y "${selected[@]}"
+            ;;
+        arch)
+            sudo pacman -S --noconfirm "${selected[@]}"
+            ;;
+        fedora)
+            sudo dnf install -y "${selected[@]}"
+            ;;
+        opensuse)
+            sudo zypper install -y "${selected[@]}"
             ;;
     esac
 }
@@ -81,10 +227,10 @@ echo "📂 Cloning repo to $REPO_PATH..."
 git clone "$REPO_URL" "$REPO_PATH"
 cd "$REPO_PATH"
 
-# Check external commands (warn only)
+# Check external commands (warn only — these are all optional now)
 echo "🔍 Checking external commands..."
 MISSING_CMDS=()
-for cmd in mpv ffmpeg yt-dlp speedtest-cli inxi; do
+for cmd in mpv ffmpeg yt-dlp speedtest-cli inxi powerprofilesctl node ruby php java g++; do
     if ! command -v "$cmd" &> /dev/null; then
         MISSING_CMDS+=("$cmd")
     fi
@@ -94,6 +240,7 @@ if [ ${#MISSING_CMDS[@]} -gt 0 ]; then
     echo "⚠️  The following optional commands are not installed:"
     printf '  %s\n' "${MISSING_CMDS[@]}"
     echo "Some AllTool features will not work without them."
+    echo "Run 'alltool requirement' to see what each command needs."
 fi
 
 # Detect power management system
