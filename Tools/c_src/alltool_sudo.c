@@ -9,9 +9,18 @@
 #include <termios.h>
 #include <fcntl.h>
 #include <sys/wait.h>
+#include <sys/mman.h>
 #include <time.h>
 
 #define SALT_LENGTH 16
+
+/* Best-effort memory wiping that the compiler must not optimize away.
+ * Used for all transient cleartext password buffers. */
+static void secure_zero(void *ptr, size_t len) {
+    if (!ptr || len == 0) return;
+    volatile unsigned char *p = (volatile unsigned char *)ptr;
+    while (len--) *p++ = 0;
+}
 
 static char *extract_json_value(char *start);
 
@@ -105,6 +114,7 @@ int alltool_sudo_encrypt_password(const char *password, const char *salt, char *
     for (size_t i = 0; i < pw_len; i++) {
         sprintf(*encrypted + i * 2, "%02x", key[i]);
     }
+    secure_zero(key, pw_len);
     free(key);
     return 0;
 }
@@ -115,6 +125,7 @@ int alltool_sudo_verify_password(const char *encrypted, const char *salt, const 
     if (ret != 0) return -1;
 
     int match = (strcmp(test_encrypted, encrypted) == 0);
+    secure_zero(test_encrypted, strlen(test_encrypted));
     free(test_encrypted);
     return match ? 0 : -1;
 }
@@ -301,6 +312,20 @@ int alltool_sudo_run_with_creds(const char *username, const char *password, cons
 
     int out_pipe[2] = { -1, -1 };
     int in_pipe[2] = { -1, -1 };
+    /* Both pipes are local anonymous IPC (never sockets/network).
+     * CLOEXEC prevents the fds from leaking into unrelated children. */
+#ifdef __linux__
+    if (pipe2(out_pipe, O_CLOEXEC) < 0) {
+        free_argv(cmd_argv, cmd_argc);
+        return -1;
+    }
+    if (pipe2(in_pipe, O_CLOEXEC) < 0) {
+        close(out_pipe[0]);
+        close(out_pipe[1]);
+        free_argv(cmd_argv, cmd_argc);
+        return -1;
+    }
+#else
     if (pipe(out_pipe) < 0) {
         free_argv(cmd_argv, cmd_argc);
         return -1;
@@ -311,6 +336,11 @@ int alltool_sudo_run_with_creds(const char *username, const char *password, cons
         free_argv(cmd_argv, cmd_argc);
         return -1;
     }
+    for (int i = 0; i < 2; i++) {
+        fcntl(out_pipe[i], F_SETFD, FD_CLOEXEC);
+        fcntl(in_pipe[i], F_SETFD, FD_CLOEXEC);
+    }
+#endif
 
     pid_t pid = fork();
     if (pid < 0) {
@@ -353,25 +383,44 @@ int alltool_sudo_run_with_creds(const char *username, const char *password, cons
     close(out_pipe[1]);
     close(in_pipe[0]);
 
-    /* Deliver "password\n" to `sudo -S` on stdin. This replaces the old
-     * `echo <password> | ...` shell pipeline; the password never passes
-     * through a shell, so embedded metacharacters cannot execute. */
-    const char *pw_parts[2] = { password, "\n" };
-    size_t pw_lens[2] = { strlen(password), 1 };
-    for (int i = 0; i < 2; i++) {
-        size_t off = 0;
-        while (off < pw_lens[i]) {
-            ssize_t w = write(in_pipe[1], pw_parts[i] + off, pw_lens[i] - off);
-            if (w < 0) {
-                if (errno == EINTR) continue;
-                break;
-            }
-            if (w == 0) break;
-            off += (size_t)w;
-        }
-        if (off < pw_lens[i]) break; /* best effort; sudo fails closed */
+    /* Deliver the password to `sudo -S` over the local anonymous pipe
+     * created above. `sudo -S` has no API for a pre-encrypted secret, so
+     * cleartext on this local-only stdin pipe is unavoidable — it never
+     * touches the network, argv, environment, or shell. Exposure is
+     * minimized: the secret lives in one mlock'd transient copy that is
+     * wiped (secure_zero) and freed immediately after the single write,
+     * and the write end is closed at once so sudo sees EOF. */
+    size_t pw_len = strlen(password);
+    char *pw_buf = malloc(pw_len + 1);
+    if (!pw_buf) {
+        close(out_pipe[0]);
+        close(in_pipe[1]);
+        waitpid(pid, NULL, 0);
+        return -1;
     }
+    memcpy(pw_buf, password, pw_len);
+    pw_buf[pw_len] = '\n';
+    (void)mlock(pw_buf, pw_len + 1);
+    size_t pw_total = pw_len + 1;
+    size_t off = 0;
+    while (off < pw_total) {
+        ssize_t w = write(in_pipe[1], pw_buf + off, pw_total - off);
+        if (w < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (w == 0) break;
+        off += (size_t)w;
+    }
+    secure_zero(pw_buf, pw_total);
+    (void)munlock(pw_buf, pw_total);
+    free(pw_buf);
+    pw_buf = NULL;
     close(in_pipe[1]);
+    in_pipe[1] = -1;
+    if (off < pw_total) {
+        /* best effort; sudo fails closed without the full password */
+    }
 
     char buffer[4096];
     size_t total = 0;
