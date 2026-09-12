@@ -1,4 +1,7 @@
 # 🛠️ AllTool & Installer Scripts - Features Overview
+
+> **AllTool-Linux** is a modular command-line toolkit for Linux that bundles 20+ everyday utilities — file and disk management, media playback, networking, power profiles, script running, security helpers, and more — behind a single `alltool` command. It ships with an interactive installer that sets up required dependencies and lets you pick optional ones per distro (Debian, Arch, Fedora, openSUSE).
+
 ```install
 curl -fsSL https://raw.githubusercontent.com/Hajjani/AllTool-Linux/refs/heads/Stable/installer.sh | bash
 ```
