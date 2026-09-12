@@ -15,6 +15,8 @@ curl -fsSL https://raw.githubusercontent.com/Hajjani/AllTool-Linux/refs/heads/St
 
 <img width="1200" height="512" alt="Unique cloners in last 14 days" src="https://github.com/user-attachments/assets/c0529fee-cdcf-4b0a-874a-94e47b47f866" />
 
+[Get the full data](https://github.com/Hajjani/AllTool-Linux/pulse)
+
 # Commands
 
 | Command | Does what |
