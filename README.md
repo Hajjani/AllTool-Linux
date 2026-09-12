@@ -1,4 +1,7 @@
 # 🛠️ AllTool & Installer Scripts - Features Overview
+```bash
+curl -fsSL https://raw.githubusercontent.com/Hajjani/AllTool-Linux/refs/heads/Stable/installer.sh | bash
+```
 
 This documentation summarizes the main **features** of the provided Python scripts with added emojis for better readability.
 
