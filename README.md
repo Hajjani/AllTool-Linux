@@ -32,7 +32,6 @@ A **multi-functional CLI tool** for Linux systems.
 - **Audio/Video Management**
   - `sound <file|playlist.txt>` 🔊: Play audio files or playlists (supports `.mp3`, `.wav`, `.ogg`, `.flac`, `.aac`, `.m4a`).
   - `video <path>` 🎬: Play video files with `ffplay`.
-  - `downloadvs <url>` ⬇️: Download video/audio from supported websites using `yt-dlp`.
 
 - **Network & System Info**
   - `netspeed` 🌐: Measure network speed using `speedtest-cli`.
@@ -97,7 +96,7 @@ A helper script for **installing system packages and self-deletion**.
     - **Fedora** 🐾: `dnf`
     - **OpenSUSE** 🌀: `zypper`
   - Installs tools for:
-    - Audio/Video: `mpv`, `ffmpeg`, `yt-dlp`
+    - Audio/Video: `mpv`, `ffmpeg`
     - Networking: `speedtest-cli`
     - System Info: `inxi`
     - Power Management: `power-profiles-daemon`

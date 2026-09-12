@@ -86,7 +86,6 @@ case "$DISTRO" in
         OPTIONAL_PKGS=(
             "mpv|audio/video playback (sound command)"
             "ffmpeg|video processing (video command)"
-            "yt-dlp|download videos/audio (downloadvs command)"
             "speedtest-cli|network speed test (netspeed command)"
             "inxi|detailed system info (sif command)"
             "power-profiles-daemon|power profiles (power command)"
@@ -102,7 +101,6 @@ case "$DISTRO" in
         OPTIONAL_PKGS=(
             "mpv|audio/video playback (sound command)"
             "ffmpeg|video processing (video command)"
-            "yt-dlp|download videos/audio (downloadvs command)"
             "speedtest-cli|network speed test (netspeed command)"
             "inxi|detailed system info (sif command)"
             "power-profiles-daemon|power profiles (power command)"
@@ -118,7 +116,6 @@ case "$DISTRO" in
         OPTIONAL_PKGS=(
             "mpv|audio/video playback (sound command)"
             "ffmpeg|video processing (video command)"
-            "yt-dlp|download videos/audio (downloadvs command)"
             "speedtest-cli|network speed test (netspeed command)"
             "inxi|detailed system info (sif command)"
             "power-profiles-daemon|power profiles (power command)"
@@ -134,7 +131,6 @@ case "$DISTRO" in
         OPTIONAL_PKGS=(
             "mpv|audio/video playback (sound command)"
             "ffmpeg|video processing (video command)"
-            "yt-dlp|download videos/audio (downloadvs command)"
             "speedtest-cli|network speed test (netspeed command)"
             "inxi|detailed system info (sif command)"
             "power-profiles-daemon|power profiles (power command)"
@@ -230,7 +226,7 @@ cd "$REPO_PATH"
 # Check external commands (warn only — these are all optional now)
 echo "🔍 Checking external commands..."
 MISSING_CMDS=()
-for cmd in mpv ffmpeg yt-dlp speedtest-cli inxi powerprofilesctl node ruby php java g++; do
+for cmd in mpv ffmpeg speedtest-cli inxi powerprofilesctl node ruby php java g++; do
     if ! command -v "$cmd" &> /dev/null; then
         MISSING_CMDS+=("$cmd")
     fi

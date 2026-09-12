@@ -167,7 +167,7 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: alltool <command> [args]")
         print(
-            "Available commands: create, format, refresh, help, netspeed, sound, video, downloadvs, requirement, power, sf, sif, up, run, psg, hs, sr, wea, pr"
+            "Available commands: create, format, refresh, help, netspeed, sound, video, requirement, power, sf, sif, up, run, psg, hs, sr, wea, pr"
         )
         return
 
@@ -258,7 +258,6 @@ Available commands:
   sound <file|playlist.txt> Play audio file or playlist (wav, mp3, ogg, flac, aac, m4a)
   netspeed                Test internet connection speed
   video <path>           Play video files
-  downloadvs <url>       Download video or audio from supported websites
   power                  Manage power profiles and system control
     - pws: power-saver mode    - pwn: balanced mode      - pwp: performance mode
     - pwst: power status       - pwo: shutdown           - pwr: reboot
@@ -293,7 +292,6 @@ Commandes disponibles :
   sound <fichier|playlist.txt> Joue un fichier audio ou une playlist
   netspeed               Test de vitesse internet
   video <chemin>         Lecture de fichiers vidéo
-  downloadvs <url>       Télécharge une vidéo ou un audio via yt-dlp
   power                  Gestion de l'alimentation et contrôle système
     - pws: mode économie      - pwn: mode équilibré     - pwp: mode performance
     - pwst: état              - pwo: arrêt              - pwr: redémarrage
@@ -328,7 +326,6 @@ Commandes disponibles :
   sound <ملف|playlist.txt>     تشغيل ملف صوتي أو قائمة تشغيل
   netspeed                   اختبار سرعة الإنترنت
   video <المسار>             تشغيل ملفات الفيديو
-  downloadvs <الرابط>        تحميل فيديو أو صوت من المواقع المدعومة
   power                     إدارة الطاقة والتحكم بالنظام
     - pws: وضع توفير الطاقة    - pwn: وضع متوازن    - pwp: وضع الأداء
     - pwst: حالة الطاقة        - pwo: إيقاف         - pwr: إعادة تشغيل
@@ -363,7 +360,6 @@ Verfügbare Befehle:
   sound <Datei|playlist.txt> Audio oder Playlist abspielen
   netspeed                 Internet-Geschwindigkeit testen
   video <Pfad>            Videodateien abspielen
-  downloadvs <URL>         Video oder Audio herunterladen
   power                    Energieverwaltung und Systemsteuerung
     - pws: Energiesparmodus    - pwn: Ausgewogen    - pwp: Leistung
     - pwst: Energiestatus      - pwo: Herunterfahren - pwr: Neustart
@@ -441,7 +437,6 @@ Verfügbare Befehle:
             "ffplay": "Video playback",
             # Network tools
             "speedtest-cli": "Network speed test",
-            "yt-dlp": "Download videos and audio from websites",
             "requests": "Python web requests library",
             "beautifulsoup4": "HTML parsing for web search",
             # Disk tools
@@ -523,16 +518,16 @@ Verfügbare Befehle:
             print("💡 Installation commands:")
             print("   For Python packages: pip install requests beautifulsoup4")
             print(
-                "   For Arch Linux: sudo pacman -S mpv ffmpeg speedtest-cli yt-dlp inxi"
+                "   For Arch Linux: sudo pacman -S mpv ffmpeg speedtest-cli inxi"
             )
             print(
-                "   For Ubuntu/Debian: sudo apt install mpv ffmpeg speedtest-cli yt-dlp inxi"
+                "   For Ubuntu/Debian: sudo apt install mpv ffmpeg speedtest-cli inxi"
             )
             print(
-                "   For Fedora: sudo dnf install mpv ffmpeg speedtest-cli yt-dlp inxi"
+                "   For Fedora: sudo dnf install mpv ffmpeg speedtest-cli inxi"
             )
             print(
-                "   For openSUSE: sudo zypper install mpv ffmpeg speedtest-cli yt-dlp inxi"
+                "   For openSUSE: sudo zypper install mpv ffmpeg speedtest-cli inxi"
             )
             print(
                 "   For power management: sudo apt install power-profiles-daemon (Ubuntu) or sudo pacman -S power-profiles-daemon (Arch)"
@@ -549,22 +544,6 @@ Verfügbare Befehle:
             return
         print(f"🎬 Playing video: {video_path}")
         subprocess.run(["ffplay", "-autoexit", video_path])
-    elif command == "downloadvs":
-        if len(sys.argv) < 3:
-            print("Usage: alltool downloadvs <video_or_audio_url>")
-            return
-        url = sys.argv[2]
-
-        # Check if yt-dlp is installed
-        result = subprocess.run(["which", "yt-dlp"], stdout=subprocess.DEVNULL)
-        if result.returncode != 0:
-            print(
-                "❌ yt-dlp is not installed. Please install it with: sudo pacman -S yt-dlp"
-            )
-            return
-
-        print(f"⬇️ Downloading from: {url}")
-        subprocess.run(["yt-dlp", url])
     elif command == "power":
         if len(sys.argv) < 3:
             print(

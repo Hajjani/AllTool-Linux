@@ -17,7 +17,7 @@ AllTool-Linux/
 ```
 
 ## Current Commands (from AllTools.py)
-`create`, `format`, `refresh`, `help`, `sound`, `netspeed`, `requirement`, `video`, `downloadvs`, `power`, `sf`, `sif`, `up`, `run`, `psg`, `hs`, `sr`, `wea`, `pr`, `cl`, `upa`, `un`
+`create`, `format`, `refresh`, `help`, `sound`, `netspeed`, `requirement`, `video`, `power`, `sf`, `sif`, `up`, `run`, `psg`, `hs`, `sr`, `wea`, `pr`, `cl`, `upa`, `un`
 
 ## Modularization Plan
 
@@ -28,7 +28,7 @@ Tools/
 ├── base.py               # BaseTool class with common patterns
 ├── file_ops.py           # create, format
 ├── system.py             # refresh, sf, sif, up, cl
-├── media.py              # sound, video, downloadvs
+├── media.py              # sound, video
 ├── network.py            # netspeed, sr, wea
 ├── power.py              # power
 ├── script_runner.py      # run
@@ -50,7 +50,7 @@ Tools/
 - Common CLI patterns (confirmation prompts, error handling) → `Tools/base.py`
 
 ### 4. Dependencies
-- External: `requests`, `beautifulsoup4`, `packaging`, `mpv`, `ffmpeg`, `yt-dlp`, `speedtest-cli`, `inxi`, `powerprofilesctl`
+- External: `requests`, `beautifulsoup4`, `packaging`, `mpv`, `ffmpeg`, `speedtest-cli`, `inxi`, `powerprofilesctl`
 - Stdlib: `cmd`, `subprocess`, `os`, `hashlib`, `json`, `signal`, `pathlib`
 
 ## Developer Commands
@@ -66,7 +66,7 @@ python3 -m Tools <command> [args]
 ## Testing
 No test suite exists. When adding tests:
 - Use `pytest` with fixtures for subprocess-based commands
-- Mock external commands (`mpv`, `yt-dlp`, `powerprofilesctl`, etc.)
+- Mock external commands (`mpv`, `powerprofilesctl`, etc.)
 - Integration tests require Linux environment with dependencies installed
 
 ## Key Constraints & Gotchas

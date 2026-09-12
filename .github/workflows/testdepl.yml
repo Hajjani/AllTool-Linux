@@ -33,7 +33,6 @@ jobs:
             e2fsprogs \
             dosfstools \
             ffmpeg \
-            yt-dlp \
             coreutils \
             inxi \
             power-profiles-daemon \

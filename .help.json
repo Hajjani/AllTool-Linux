@@ -106,18 +106,6 @@
         "de": "Videodateien abspielen"
       }
     },
-    "downloadvs": {
-      "description": "Download video or audio from supported websites using yt-dlp",
-      "usage": "alltool downloadvs <url>",
-      "aliases": ["dl"],
-      "examples": ["alltool downloadvs https://youtube.com/watch?v=...", "alltool downloadvs https://vimeo.com/..."],
-      "lang": {
-        "en": "Download video or audio from supported websites",
-        "fr": "Télécharger une vidéo ou un audio via yt-dlp",
-        "ar": "تحميل فيديو أو صوت من المواقع المدعومة",
-        "de": "Video oder Audio herunterladen"
-      }
-    },
     "power": {
       "description": "Manage power profiles and system control",
       "usage": "alltool power [subcommand]",

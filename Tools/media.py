@@ -76,19 +76,3 @@ def video(args: list):
     print(f"🎬 Playing video: {video_path}")
     subprocess.run(["ffplay", "-autoexit", video_path])
     return 0
-
-@command("downloadvs", aliases=["dl"], help_text="Download video/audio from supported websites")
-def downloadvs(args: list):
-    if not args:
-        print("Usage: alltool downloadvs <video_or_audio_url>")
-        return 1
-
-    tool = ToolBase()
-    if not tool.has_command("yt-dlp"):
-        tool.print_error("yt-dlp is not installed. Please install it.")
-        return 1
-
-    url = args[0]
-    print(f"⬇️ Downloading from: {url}")
-    subprocess.run(["yt-dlp", url])
-    return 0
