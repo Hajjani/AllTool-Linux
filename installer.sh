@@ -44,7 +44,7 @@ install_packages() {
         debian)
             echo "📥 Installing packages for Debian/Ubuntu..."
             sudo apt update && sudo apt install -y \
-                make gcc python3-pip pkg-config \
+                make git gcc python3-pip pkg-config \
                 mpv ffmpeg yt-dlp speedtest-cli inxi power-profiles-daemon \
                 python3 python3-pip nodejs ruby php default-jre g++ \
                 python3-requests python3-bs4
@@ -52,7 +52,7 @@ install_packages() {
         arch)
             echo "📥 Installing packages for Arch Linux..."
             sudo pacman -S --noconfirm \
-                make gcc python-pip pkg-config \
+                make git gcc python-pip pkg-config \
                 mpv ffmpeg yt-dlp speedtest-cli inxi power-profiles-daemon \
                 python python-pip nodejs ruby php jre-openjdk gcc \
                 python-requests python-beautifulsoup4
@@ -60,7 +60,7 @@ install_packages() {
         fedora)
             echo "📥 Installing packages for Fedora..."
             sudo dnf install -y \
-                make gcc python3-pip pkg-config \
+                make git gcc python3-pip pkg-config \
                 mpv ffmpeg yt-dlp speedtest-cli inxi power-profiles-daemon \
                 python3 python3-pip nodejs ruby php java-latest-openjdk gcc-c++ \
                 python3-requests python3-beautifulsoup4
@@ -68,7 +68,7 @@ install_packages() {
         opensuse)
             echo "📥 Installing packages for openSUSE..."
             sudo zypper install -y \
-                make gcc python3-pip pkg-config \
+                make git gcc python3-pip pkg-config \
                 mpv ffmpeg yt-dlp speedtest-cli inxi power-profiles-daemon \
                 python3 python3-pip nodejs ruby php java-latest-openjdk gcc-c++ \
                 python3-requests python3-beautifulsoup4
