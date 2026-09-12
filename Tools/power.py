@@ -4,6 +4,70 @@ import os
 import json
 from pathlib import Path
 
+BACKEND_CMDS = {
+    "powerprofilesctl": "powerprofilesctl",
+    "tlp": "tlp",
+    "auto-cpufreq": "auto-cpufreq",
+    "cpupower": "cpupower",
+    "sysfs": None,  # Uses sysfs directly
+}
+
+BACKEND_INSTALL_HINTS = {
+    "debian": {
+        "powerprofilesctl": "sudo apt install power-profiles-daemon",
+        "tlp": "sudo apt install tlp",
+        "auto-cpufreq": "pip install auto-cpufreq",
+        "cpupower": "sudo apt install linux-tools-common linux-tools-$(uname -r)",
+    },
+    "ubuntu": {
+        "powerprofilesctl": "sudo apt install power-profiles-daemon",
+        "tlp": "sudo apt install tlp",
+        "auto-cpufreq": "pip install auto-cpufreq",
+        "cpupower": "sudo apt install linux-tools-common linux-tools-$(uname -r)",
+    },
+    "arch": {
+        "powerprofilesctl": "sudo pacman -S power-profiles-daemon",
+        "tlp": "sudo pacman -S tlp",
+        "auto-cpufreq": "sudo pacman -S auto-cpufreq",
+        "cpupower": "sudo pacman -S cpupower",
+    },
+    "fedora": {
+        "powerprofilesctl": "sudo dnf install power-profiles-daemon",
+        "tlp": "sudo dnf install tlp",
+        "auto-cpufreq": "pip install auto-cpufreq",
+        "cpupower": "sudo dnf install cpupower",
+    },
+    "opensuse": {
+        "powerprofilesctl": "sudo zypper install power-profiles-daemon",
+        "tlp": "sudo zypper install tlp",
+        "auto-cpufreq": "pip install auto-cpufreq",
+        "cpupower": "sudo zypper install cpupower",
+    },
+}
+
+def _get_distro():
+    if os.path.exists("/etc/os-release"):
+        with open("/etc/os-release") as f:
+            for line in f:
+                if line.startswith("ID="):
+                    return line.strip().split("=")[1].strip('"')
+    return "unknown"
+
+def _check_backend(tool, backend):
+    cmd = BACKEND_CMDS.get(backend)
+    if cmd is None:
+        return True  # sysfs doesn't need a command
+    if not tool.has_command(cmd):
+        tool.print_error(f"{cmd} is not installed (required for {backend} backend).")
+        distro = _get_distro()
+        hints = BACKEND_INSTALL_HINTS.get(distro, {})
+        if cmd in hints:
+            print(f"   Install with: {hints[cmd]}")
+        else:
+            print(f"   Install {cmd} using your package manager.")
+        return False
+    return True
+
 def _get_power_config():
     config_path = Path.home() / ".config" / "alltool" / ".confs.json"
     if config_path.exists():
@@ -65,6 +129,10 @@ def power(args: list):
 
     if backend == "none":
         tool.print_error("No power management backend detected.")
+        print("   Run the installer to set up a power management backend.")
+        return 1
+
+    if not _check_backend(tool, backend):
         return 1
 
     subcommand = args[0]

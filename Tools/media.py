@@ -2,8 +2,30 @@ from .base import command, ToolBase
 import os
 import subprocess
 
+def _check_mpv(tool):
+    if not tool.has_command("mpv"):
+        tool.print_error("mpv is not installed.")
+        print("   Install with: sudo apt install mpv  (Debian/Ubuntu)")
+        print("               sudo pacman -S mpv  (Arch)")
+        print("               sudo dnf install mpv  (Fedora)")
+        return False
+    return True
+
+def _check_ffplay(tool):
+    if not tool.has_command("ffplay"):
+        tool.print_error("ffplay (from ffmpeg) is not installed.")
+        print("   Install with: sudo apt install ffmpeg  (Debian/Ubuntu)")
+        print("               sudo pacman -S ffmpeg  (Arch)")
+        print("               sudo dnf install ffmpeg  (Fedora)")
+        return False
+    return True
+
 @command("sound", help_text="Play audio file or playlist (wav, mp3, ogg, flac, aac, m4a)")
 def sound(args: list):
+    tool = ToolBase()
+    if not _check_mpv(tool):
+        return 1
+
     if not args:
         print("Usage: alltool sound <path_to_audio_file_or_playlist.txt>")
         return 1
@@ -38,6 +60,10 @@ def sound(args: list):
 
 @command("video", help_text="Play video files with ffplay")
 def video(args: list):
+    tool = ToolBase()
+    if not _check_ffplay(tool):
+        return 1
+
     if not args:
         print("Usage: alltool video <path_to_video>")
         return 1

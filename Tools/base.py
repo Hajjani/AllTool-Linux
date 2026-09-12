@@ -22,7 +22,11 @@ class ToolBase:
             return ""
 
     def has_command(self, cmd: str) -> bool:
-        return self.run_cmd(["which", cmd], capture=True).returncode == 0
+        try:
+            result = subprocess.run(["which", cmd], capture_output=True, check=False)
+            return result.returncode == 0
+        except Exception:
+            return False
 
     def confirm(self, message: str, default: bool = False) -> bool:
         suffix = " [Y/n]: " if default else " [y/N]: "

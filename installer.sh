@@ -1,6 +1,5 @@
 #!/bin/bash
 # AllTool-Linux Installer
-# Clones the repo, installs dependencies, sets up the tool, then cleans up.
 
 set -e
 
@@ -11,13 +10,6 @@ ENTRY_POINT="alltool"
 
 echo "🚀 AllTool-Linux Installer"
 echo "========================================"
-
-# Create temp directory
-TMPDIR=$(mktemp -d)
-REPO_PATH="$TMPDIR/AllTool-Linux"
-echo "📂 Cloning repo to $REPO_PATH..."
-git clone "$REPO_URL" "$REPO_PATH"
-cd "$REPO_PATH"
 
 # Detect distro
 detect_distro() {
@@ -45,7 +37,7 @@ install_packages() {
             echo "📥 Installing packages for Debian/Ubuntu..."
             sudo apt update && sudo apt install -y \
                 make git gcc python3-pip pkg-config \
-                mpv ffmpeg yt-dlp speedtest-cli inxi power-profiles-daemon \
+                mpv ffmpeg yt-dlp speedtest-cli inxi \
                 python3 python3-pip nodejs ruby php default-jre g++ \
                 python3-requests python3-bs4
             ;;
@@ -53,7 +45,7 @@ install_packages() {
             echo "📥 Installing packages for Arch Linux..."
             sudo pacman -S --noconfirm \
                 make git gcc python-pip pkg-config \
-                mpv ffmpeg yt-dlp speedtest-cli inxi power-profiles-daemon \
+                mpv ffmpeg yt-dlp speedtest-cli inxi \
                 python python-pip nodejs ruby php jre-openjdk gcc \
                 python-requests python-beautifulsoup4
             ;;
@@ -61,7 +53,7 @@ install_packages() {
             echo "📥 Installing packages for Fedora..."
             sudo dnf install -y \
                 make git gcc python3-pip pkg-config \
-                mpv ffmpeg yt-dlp speedtest-cli inxi power-profiles-daemon \
+                mpv ffmpeg yt-dlp speedtest-cli inxi \
                 python3 python3-pip nodejs ruby php java-latest-openjdk gcc-c++ \
                 python3-requests python3-beautifulsoup4
             ;;
@@ -69,7 +61,7 @@ install_packages() {
             echo "📥 Installing packages for openSUSE..."
             sudo zypper install -y \
                 make git gcc python3-pip pkg-config \
-                mpv ffmpeg yt-dlp speedtest-cli inxi power-profiles-daemon \
+                mpv ffmpeg yt-dlp speedtest-cli inxi \
                 python3 python3-pip nodejs ruby php java-latest-openjdk gcc-c++ \
                 python3-requests python3-beautifulsoup4 python3-packaging
             ;;
@@ -80,6 +72,14 @@ install_packages() {
 }
 
 install_packages
+
+
+# Create temp directory
+TMPDIR=$(mktemp -d)
+REPO_PATH="$TMPDIR/AllTool-Linux"
+echo "📂 Cloning repo to $REPO_PATH..."
+git clone "$REPO_URL" "$REPO_PATH"
+cd "$REPO_PATH"
 
 # Check external commands (warn only)
 echo "🔍 Checking external commands..."

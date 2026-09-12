@@ -3,11 +3,19 @@ import subprocess
 import requests
 from bs4 import BeautifulSoup
 
+def _check_speedtest(tool):
+    if not tool.has_command("speedtest-cli"):
+        tool.print_error("speedtest-cli is not installed.")
+        print("   Install with: sudo apt install speedtest-cli  (Debian/Ubuntu)")
+        print("               sudo pacman -S speedtest-cli  (Arch)")
+        print("               sudo dnf install speedtest-cli  (Fedora)")
+        return False
+    return True
+
 @command("netspeed", help_text="Measure network speed")
 def netspeed(args: list):
     tool = ToolBase()
-    if not tool.has_command("speedtest-cli"):
-        tool.print_error("speedtest-cli not installed.")
+    if not _check_speedtest(tool):
         return 1
     tool.print_status("Measuring network speed...")
     subprocess.run(["speedtest-cli"])

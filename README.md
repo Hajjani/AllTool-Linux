@@ -1,5 +1,5 @@
 # 🛠️ AllTool & Installer Scripts - Features Overview
-```bash
+```install
 curl -fsSL https://raw.githubusercontent.com/Hajjani/AllTool-Linux/refs/heads/Stable/installer.sh | bash
 ```
 
