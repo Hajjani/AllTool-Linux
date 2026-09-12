@@ -1,5 +1,7 @@
 #define _GNU_SOURCE
 #include "alltool_sudo.h"
+#include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -125,58 +127,279 @@ int alltool_sudo_decrypt_password(const char *encrypted, const char *salt, const
     return 0;
 }
 
+/* Maximum argv entries produced when splitting a command line. */
+#define SUDO_MAX_ARGS 4096
+
+/* Usernames come from the config file, so enforce a strict allowlist.
+ * Accepts POSIX-portable names (up to 32 chars, no leading '-'/'_'
+ * confusion with option parsing since the value is passed via -u anyway). */
+static int valid_username(const char *username) {
+    if (!username || username[0] == '\0') return 0;
+    size_t len = strlen(username);
+    if (len > 32) return 0;
+    unsigned char c = (unsigned char)username[0];
+    if (!isalnum(c) && c != '_' && c != '.') return 0;
+    for (size_t i = 1; i < len; i++) {
+        c = (unsigned char)username[i];
+        if (!isalnum(c) && c != '_' && c != '.' && c != '-') return 0;
+    }
+    return 1;
+}
+
+static void free_argv(char **argv, size_t argc) {
+    if (!argv) return;
+    for (size_t i = 0; i < argc; i++) free(argv[i]);
+    free(argv);
+}
+
+/* Split a command line into argv WITHOUT invoking a shell.
+ *
+ * Understands single quotes, double quotes and backslash escapes, so
+ * shlex.quote()-style input from the Python caller round-trips exactly,
+ * but performs NO expansions: '$', backticks, $(...), globbing and
+ * operators such as ';', '|', '&', '>', '<' are ordinary literal
+ * characters. A word like ";" therefore becomes a harmless literal
+ * argument instead of a command separator.
+ *
+ * Returns 0 on success (*argv_out is NULL-terminated, *argc_out set),
+ * -1 on unbalanced quotes, empty input or allocation failure. */
+static int split_command(const char *command, char ***argv_out, size_t *argc_out) {
+    *argv_out = NULL;
+    *argc_out = 0;
+    if (!command) return -1;
+
+    size_t argv_cap = 16, argc = 0;
+    char **argv = malloc(argv_cap * sizeof(char *));
+    if (!argv) return -1;
+
+    size_t word_cap = 64, word_len = 0;
+    char *word = malloc(word_cap);
+    if (!word) {
+        free(argv);
+        return -1;
+    }
+    int in_word = 0; /* true once a word (even an empty quoted one) starts */
+    int rc = -1;
+
+    const char *p = command;
+    while (*p) {
+        if (*p == '\'') {
+            /* Single quotes: literal until closing quote. */
+            in_word = 1;
+            p++;
+            while (*p && *p != '\'') {
+                if (word_len + 1 >= word_cap) {
+                    word_cap *= 2;
+                    char *nw = realloc(word, word_cap);
+                    if (!nw) goto done;
+                    word = nw;
+                }
+                word[word_len++] = *p++;
+            }
+            if (!*p) goto done; /* unbalanced quote */
+            p++;
+        } else if (*p == '"') {
+            /* Double quotes: backslash escapes next char, nothing expands. */
+            in_word = 1;
+            p++;
+            while (*p && *p != '"') {
+                if (*p == '\\' && p[1]) p++;
+                if (word_len + 1 >= word_cap) {
+                    word_cap *= 2;
+                    char *nw = realloc(word, word_cap);
+                    if (!nw) goto done;
+                    word = nw;
+                }
+                word[word_len++] = *p++;
+            }
+            if (!*p) goto done; /* unbalanced quote */
+            p++;
+        } else if (*p == '\\' && p[1]) {
+            /* Bare backslash escapes the next character literally. */
+            in_word = 1;
+            p++;
+            if (word_len + 1 >= word_cap) {
+                word_cap *= 2;
+                char *nw = realloc(word, word_cap);
+                if (!nw) goto done;
+                word = nw;
+            }
+            word[word_len++] = *p++;
+        } else if (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') {
+            if (in_word) {
+                word[word_len] = '\0';
+                if (argc + 1 >= argv_cap || argc + 1 >= SUDO_MAX_ARGS) goto done;
+                if (argc + 1 >= argv_cap) {
+                    argv_cap *= 2;
+                    char **na = realloc(argv, argv_cap * sizeof(char *));
+                    if (!na) goto done;
+                    argv = na;
+                }
+                argv[argc] = strdup(word);
+                if (!argv[argc]) goto done;
+                argc++;
+                word_len = 0;
+                in_word = 0;
+            }
+            p++;
+        } else {
+            in_word = 1;
+            if (word_len + 1 >= word_cap) {
+                word_cap *= 2;
+                char *nw = realloc(word, word_cap);
+                if (!nw) goto done;
+                word = nw;
+            }
+            word[word_len++] = *p++;
+        }
+    }
+
+    if (in_word) {
+        word[word_len] = '\0';
+        if (argc + 1 >= SUDO_MAX_ARGS) goto done;
+        if (argc + 1 >= argv_cap) {
+            argv_cap = argc + 1;
+            char **na = realloc(argv, argv_cap * sizeof(char *));
+            if (!na) goto done;
+            argv = na;
+        }
+        argv[argc] = strdup(word);
+        if (!argv[argc]) goto done;
+        argc++;
+    }
+
+    if (argc == 0) goto done; /* empty / whitespace-only command */
+    argv[argc] = NULL;
+    *argv_out = argv;
+    *argc_out = argc;
+    argv = NULL;
+    rc = 0;
+
+done:
+    free(word);
+    free_argv(argv, argc);
+    return rc;
+}
+
+/* Fixed locations for sudo: never resolve it via PATH, which the caller
+ * (or its environment) may control. */
+static const char *const SUDO_PATHS[] = { "/usr/bin/sudo", "/bin/sudo", NULL };
+
 int alltool_sudo_run_with_creds(const char *username, const char *password, const char *command, char **output) {
-    int pipefd[2];
-    if (pipe(pipefd) < 0) return -1;
+    if (!username || !password || !command || !output) return -1;
+    if (!valid_username(username)) return -1;
+
+    /* No shell is involved anywhere below: the command line is tokenized
+     * above (no expansion), and sudo is exec'd directly with an argv
+     * array, so metacharacters in username/password/command are inert. */
+    char **cmd_argv = NULL;
+    size_t cmd_argc = 0;
+    if (split_command(command, &cmd_argv, &cmd_argc) != 0 || cmd_argc == 0) {
+        free_argv(cmd_argv, cmd_argc);
+        return -1;
+    }
+
+    int out_pipe[2] = { -1, -1 };
+    int in_pipe[2] = { -1, -1 };
+    if (pipe(out_pipe) < 0) {
+        free_argv(cmd_argv, cmd_argc);
+        return -1;
+    }
+    if (pipe(in_pipe) < 0) {
+        close(out_pipe[0]);
+        close(out_pipe[1]);
+        free_argv(cmd_argv, cmd_argc);
+        return -1;
+    }
 
     pid_t pid = fork();
     if (pid < 0) {
-        close(pipefd[0]);
-        close(pipefd[1]);
+        close(out_pipe[0]);
+        close(out_pipe[1]);
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        free_argv(cmd_argv, cmd_argc);
         return -1;
     }
 
     if (pid == 0) {
-        close(pipefd[0]);
-        dup2(pipefd[1], STDOUT_FILENO);
-        dup2(pipefd[1], STDERR_FILENO);
-        close(pipefd[1]);
+        close(out_pipe[0]);
+        close(in_pipe[1]);
+        dup2(out_pipe[1], STDOUT_FILENO);
+        dup2(out_pipe[1], STDERR_FILENO);
+        dup2(in_pipe[0], STDIN_FILENO);
+        close(out_pipe[1]);
+        close(in_pipe[0]);
 
-        char sudo_cmd[2048];
-        snprintf(sudo_cmd, sizeof(sudo_cmd), "echo %s | sudo -S -u %s %s", password, username, command);
-        execl("/bin/sh", "sh", "-c", sudo_cmd, (char *)NULL);
+        /* sudo -S reads the password from stdin; "--" keeps a command
+         * starting with '-' from being parsed as a sudo option. */
+        char **sudo_argv = malloc((cmd_argc + 7) * sizeof(char *));
+        if (!sudo_argv) _exit(127);
+        sudo_argv[0] = "sudo";
+        sudo_argv[1] = "-S";
+        sudo_argv[2] = "-u";
+        sudo_argv[3] = (char *)username;
+        sudo_argv[4] = "--";
+        for (size_t i = 0; i < cmd_argc; i++) sudo_argv[5 + i] = cmd_argv[i];
+        sudo_argv[5 + cmd_argc] = NULL;
+
+        for (size_t i = 0; SUDO_PATHS[i]; i++) {
+            execv(SUDO_PATHS[i], sudo_argv);
+        }
         _exit(127);
     }
 
-    close(pipefd[1]);
+    free_argv(cmd_argv, cmd_argc); /* child has its own copy */
+    close(out_pipe[1]);
+    close(in_pipe[0]);
+
+    /* Deliver "password\n" to `sudo -S` on stdin. This replaces the old
+     * `echo <password> | ...` shell pipeline; the password never passes
+     * through a shell, so embedded metacharacters cannot execute. */
+    const char *pw_parts[2] = { password, "\n" };
+    size_t pw_lens[2] = { strlen(password), 1 };
+    for (int i = 0; i < 2; i++) {
+        size_t off = 0;
+        while (off < pw_lens[i]) {
+            ssize_t w = write(in_pipe[1], pw_parts[i] + off, pw_lens[i] - off);
+            if (w < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
+            if (w == 0) break;
+            off += (size_t)w;
+        }
+        if (off < pw_lens[i]) break; /* best effort; sudo fails closed */
+    }
+    close(in_pipe[1]);
 
     char buffer[4096];
     size_t total = 0;
     size_t capacity = 4096;
     char *result = malloc(capacity);
     if (!result) {
-        close(pipefd[0]);
+        close(out_pipe[0]);
         waitpid(pid, NULL, 0);
         return -1;
     }
 
     ssize_t n;
-    while ((n = read(pipefd[0], buffer, sizeof(buffer))) > 0) {
-        if (total + n + 1 >= capacity) {
+    while ((n = read(out_pipe[0], buffer, sizeof(buffer))) > 0) {
+        if (total + (size_t)n + 1 >= capacity) {
             capacity *= 2;
             char *new_result = realloc(result, capacity);
             if (!new_result) {
                 free(result);
-                close(pipefd[0]);
+                close(out_pipe[0]);
                 waitpid(pid, NULL, 0);
                 return -1;
             }
             result = new_result;
         }
-        memcpy(result + total, buffer, n);
-        total += n;
+        memcpy(result + total, buffer, (size_t)n);
+        total += (size_t)n;
     }
-    close(pipefd[0]);
+    close(out_pipe[0]);
 
     int status;
     waitpid(pid, &status, 0);
