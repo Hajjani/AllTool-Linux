@@ -26,16 +26,16 @@ jobs:
 
       - name: Download clone statistics
         env:
-          CLONES_TOKEN: ${{ secrets.CLONES_TOKEN }}
+          CLONES_TOKEN: ${{ secrets.tafic_updater }}
           REPOSITORY: ${{ github.repository }}
         run: |
           mkdir -p data assets
 
           curl --fail-with-body \
             -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $CLONES_TOKEN" \
+            -H "Authorization: Bearer ${CLONES_TOKEN}" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/$REPOSITORY/traffic/clones" \
+            "https://api.github.com/repos/${REPOSITORY}/traffic/clones" \
             > data/clones.json
 
       - name: Create or update PNG graphs
@@ -52,7 +52,7 @@ jobs:
 
           dates = [item["timestamp"][:10] for item in clone_data]
           total_clones = [item["count"] for item in clone_data]
-          special_clones = [item["uniques"] for item in clone_data]
+          unique_clones = [item["uniques"] for item in clone_data]
 
           os.makedirs("assets", exist_ok=True)
 
@@ -85,14 +85,14 @@ jobs:
           create_graph(
               total_clones,
               "Repository Clones - Last 14 Days",
-              "assets/clones_trafic.png",
+              "assets/clones_traffic.png",
               "#2ea44f"
           )
 
           create_graph(
-              special_clones,
+              unique_clones,
               "Unique Clones - Last 14 Days",
-              "assets/special_clones_trafic.png",
+              "assets/unique_clones_traffic.png",
               "#0969da"
           )
           PY
@@ -101,6 +101,6 @@ jobs:
         uses: EndBug/add-and-commit@v9
         with:
           add: |
-            assets/clones_trafic.png
-            assets/special_clones_trafic.png
+            assets/clones_traffic.png
+            assets/unique_clones_traffic.png
           message: "Update clone traffic graphs"
