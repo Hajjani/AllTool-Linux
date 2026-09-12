@@ -8,7 +8,7 @@ HOME_BIN = $(HOME)/.config/alltool/bin
 HOME_CACHE = $(HOME)/.config/alltool/cache
 HOME_LOGS = $(HOME)/.config/alltool/logs
 
-.PHONY: all build-c install-c install-python install-config install uninstall test clean
+.PHONY: all build-c install-c install-user install-python install-config install uninstall test clean
 
 all: build-c
 
@@ -28,6 +28,17 @@ install-c: build-c
 install-python:
 	@echo "Installing Python package..."
 	pip3 install -e . --break-system-packages 2>/dev/null || pip3 install -e .
+
+# User-space install for the installer.sh flow: no root, no pip, no network.
+# Puts the C libraries where Tools/bindings.py actually loads them from
+# (~/.config/alltool/bin) and drops in the default configs.
+install-user: build-c install-config
+	@echo "Installing C libraries and binary to $(HOME_BIN)..."
+	install -d $(HOME_BIN)
+	install -m 755 Tools/c_src/liballtool_shm.so $(HOME_BIN)/
+	install -m 755 Tools/c_src/liballtool_compiler.so $(HOME_BIN)/
+	install -m 755 Tools/c_src/liballtool_sudo.so $(HOME_BIN)/
+	install -m 755 Tools/c_src/alltool_runner $(HOME_BIN)/
 
 install-config:
 	@echo "Creating user config directory at $(HOME_CONFIG)..."

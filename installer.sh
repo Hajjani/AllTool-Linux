@@ -290,9 +290,10 @@ print("Updated .confs.json with power management config")
 EOF
 fi
 
-# Run make install
-echo "🔨 Running make install..."
-make install
+# User-space install (no root needed: libs go to ~/.config/alltool/bin,
+# which is where the app loads them from — NOT /usr/local like `make install`)
+echo "🔨 Running make install-user..."
+make install-user
 
 # Set up the tool in ~/bin
 echo "⚙️  Setting up AllTool in ~/bin..."
