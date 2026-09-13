@@ -1,7 +1,39 @@
 from .base import command, ToolBase
+from .bindings import HOME_DIR
 import os
 import subprocess
 import sys
+import tempfile
+
+_TIMER_NAME = "alltool_pomodoro_timer.py"
+
+
+def _timer_path():
+    # Per-user unique path (no /tmp race between users/instances).
+    d = HOME_DIR / "cache"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    return str(d / _TIMER_NAME)
+
+
+def _pid_file():
+    return str(HOME_DIR / "cache" / "pomodoro.pid")
+
+
+def _pids():
+    # Exact match on our timer path; avoids matching `pgrep -f` itself or
+    # unrelated commands containing the substring.
+    tp = _timer_path()
+    try:
+        result = subprocess.run(["pgrep", "-f", f"^{sys.executable}.*{tp}$"],
+                                capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    return [p.strip() for p in result.stdout.splitlines() if p.strip().isdigit()]
 
 @command("pr", aliases=["pomodoro"], help_text="Manage Pomodoro sessions")
 def pomodoro(args: list):
@@ -16,21 +48,34 @@ def pomodoro(args: list):
     log_file = os.path.expanduser("~/.alltool_pomodoro.log")
 
     if args[0] == "stop":
-        result = subprocess.run(["pgrep", "-f", "pomodoro_timer"], capture_output=True, text=True)
-        if result.returncode == 0:
-            pids = result.stdout.strip().split("\n")
+        pids = _pids()
+        # Fall back to PID file if pgrep finds nothing (e.g. pgrep missing).
+        if not pids:
+            try:
+                with open(_pid_file()) as f:
+                    pid = f.read().strip()
+                    if pid.isdigit():
+                        pids = [pid]
+            except OSError:
+                pass
+        if pids:
             for pid in pids:
-                if pid:
-                    subprocess.run(["kill", pid])
+                try:
+                    subprocess.run(["kill", pid], timeout=5)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            try:
+                os.unlink(_pid_file())
+            except OSError:
+                pass
             tool.print_success("Pomodoro timer stopped")
         else:
             tool.print_status("No Pomodoro timer running")
         return 0
 
     elif args[0] == "st":
-        result = subprocess.run(["pgrep", "-f", "pomodoro_timer"], capture_output=True, text=True)
-        if result.returncode == 0:
-            pids = result.stdout.strip().split("\n")
+        pids = _pids()
+        if pids:
             tool.print_status("Pomodoro timer is running")
             print(f"📊 Process IDs: {', '.join([pid for pid in pids if pid])}")
             if os.path.exists(log_file):
@@ -51,6 +96,12 @@ def pomodoro(args: list):
         sessions = int(args[0])
         if sessions <= 0:
             tool.print_error("Sessions must be greater than 0")
+            return 1
+        if sessions > 100:
+            tool.print_error("Sessions too large (max 100).")
+            return 1
+        if _pids():
+            tool.print_warning("A Pomodoro timer is already running. Stop it first ('alltool pr stop').")
             return 1
 
         pomodoro_script = f"""#!/usr/bin/env python3
@@ -113,18 +164,30 @@ print(f"\\n🎉 All {{sessions}} Pomodoro sessions completed!")
 print("🏆 Great job! You've finished your work session.")
 log("All sessions completed")
 """
-        script_path = "/tmp/pomodoro_timer.py"
+        script_path = _timer_path()
         with open(script_path, "w") as f:
             f.write(pomodoro_script)
-        subprocess.run(["chmod", "+x", script_path])
+        subprocess.run(["chmod", "+x", script_path], timeout=10)
 
-        with open(log_file, "w") as log:
+        # Append to log (don't truncate history) and track PID for reliable stop.
+        log_handle = open(log_file, "a")
+        try:
             process = subprocess.Popen(
                 [sys.executable, script_path],
-                stdout=log,
-                stderr=log,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
                 preexec_fn=os.setsid,
             )
+        except Exception:
+            log_handle.close()
+            raise
+        # Popen keeps its own dup; we can close ours.
+        log_handle.close()
+        try:
+            with open(_pid_file(), "w") as f:
+                f.write(str(process.pid))
+        except OSError:
+            pass
 
         tool.print_success("Pomodoro timer started in background")
         print(f"📄 Progress logged to {log_file}")

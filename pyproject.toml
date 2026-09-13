@@ -14,11 +14,8 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "packaging>=24.0",
 ]
-entry-points = {
-    "console_scripts": [
-        "alltool = Tools:main",
-    ],
-}
+[project.scripts]
+alltool = "Tools:main"
 
 [project.optional-dependencies]
 dev = [

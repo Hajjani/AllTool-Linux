@@ -24,14 +24,14 @@ BACKEND_INSTALL_HINTS = {
     "debian": {
         "powerprofilesctl": "sudo apt install power-profiles-daemon",
         "tlp": "sudo apt install tlp",
-        "auto-cpufreq": "pip install auto-cpufreq",
-        "cpupower": "sudo apt install linux-tools-common linux-tools-$(uname -r)",
+        "auto-cpufreq": "sudo apt install auto-cpufreq",
+        "cpupower": "sudo apt install linux-tools-common linux-tools-generic",
     },
     "ubuntu": {
         "powerprofilesctl": "sudo apt install power-profiles-daemon",
         "tlp": "sudo apt install tlp",
-        "auto-cpufreq": "pip install auto-cpufreq",
-        "cpupower": "sudo apt install linux-tools-common linux-tools-$(uname -r)",
+        "auto-cpufreq": "sudo apt install auto-cpufreq",
+        "cpupower": "sudo apt install linux-tools-common linux-tools-generic",
     },
     "arch": {
         "powerprofilesctl": "sudo pacman -S power-profiles-daemon",
@@ -87,15 +87,20 @@ def _get_power_config():
             pass
     return {"backend": "powerprofilesctl", "profiles": ["power-saver", "balanced", "performance"]}
 
+def _run(cmd, **kwargs):
+    kwargs.setdefault("timeout", 10)
+    return subprocess.run(cmd, **kwargs)
+
+
 def _set_profile(backend, profile):
     if backend == "powerprofilesctl":
-        subprocess.run(["powerprofilesctl", "set", profile], check=False)
+        _run(["powerprofilesctl", "set", profile], check=False)
     elif backend == "tlp":
-        subprocess.run(["sudo", "tlp", profile], check=False)
+        _run(["sudo", "tlp", profile], check=False)
     elif backend == "auto-cpufreq":
-        subprocess.run(["auto-cpufreq", "--force", profile], check=False)
+        _run(["sudo", "auto-cpufreq", "--force", profile], check=False)
     elif backend == "cpupower":
-        subprocess.run(["sudo", "cpupower", "frequency-set", "-g", profile], check=False)
+        _run(["sudo", "cpupower", "frequency-set", "-g", profile], check=False)
     elif backend == "sysfs":
         for cpu in Path("/sys/devices/system/cpu").glob("cpu[0-9]*"):
             gov_file = cpu / "cpufreq" / "scaling_governor"
@@ -103,25 +108,30 @@ def _set_profile(backend, profile):
                 try:
                     gov_file.write_text(profile + "\n")
                 except PermissionError:
-                    subprocess.run(["sudo", "tee", str(gov_file)], input=profile.encode(), check=False)
+                    # tee needs the trailing newline that sysfs expects.
+                    _run(["sudo", "tee", str(gov_file)], input=(profile + "\n").encode(), check=False)
 
 def _get_current_profile(backend):
-    if backend == "powerprofilesctl":
-        result = subprocess.run(["powerprofilesctl", "get"], capture_output=True, text=True)
-        return result.stdout.strip()
-    elif backend == "tlp":
-        result = subprocess.run(["tlp-stat", "-p"], capture_output=True, text=True)
-        return result.stdout.strip()
-    elif backend == "auto-cpufreq":
-        result = subprocess.run(["auto-cpufreq", "--status"], capture_output=True, text=True)
-        return result.stdout.strip()
-    elif backend == "cpupower":
-        result = subprocess.run(["cpupower", "frequency-info", "-p"], capture_output=True, text=True)
-        return result.stdout.strip()
-    elif backend == "sysfs":
-        gov_file = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
-        if gov_file.exists():
-            return gov_file.read_text().strip()
+    try:
+        if backend == "powerprofilesctl":
+            result = _run(["powerprofilesctl", "get"], capture_output=True, text=True)
+            return result.stdout.strip()
+        elif backend == "tlp":
+            result = _run(["tlp-stat", "-s"], capture_output=True, text=True)
+            return result.stdout.strip()
+        elif backend == "auto-cpufreq":
+            result = _run(["auto-cpufreq", "--stats"], capture_output=True, text=True)
+            return result.stdout.strip() or _run(
+                ["auto-cpufreq", "--status"], capture_output=True, text=True).stdout.strip()
+        elif backend == "cpupower":
+            result = _run(["cpupower", "frequency-info", "-p"], capture_output=True, text=True)
+            return result.stdout.strip()
+        elif backend == "sysfs":
+            gov_file = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+            if gov_file.exists():
+                return gov_file.read_text().strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
     return "unknown"
 
 @command("power", aliases=["pwr"], help_text="Manage power profiles and system control")
@@ -177,11 +187,24 @@ def power(args: list):
         return 1
 
     cmd, msg = commands[subcommand]
+    # Destructive session/system actions need explicit confirmation.
+    # pwl kills the whole login session (including this process).
+    if subcommand in ("pwo", "pwr", "pwl", "pwsu", "pwh"):
+        if not tool.confirm(f"{msg} Are you sure?", default=False):
+            print("Aborted.")
+            return 0
     print(msg)
-    if subcommand in ("pwo", "pwr"):
-        subprocess.run(cmd)
-    else:
-        subprocess.run(cmd, check=False)
+    try:
+        if subcommand in ("pwo", "pwr"):
+            _run(cmd)
+        else:
+            _run(cmd, check=False)
+    except subprocess.TimeoutExpired:
+        tool.print_error("Command timed out.")
+        return 1
+    except OSError as e:
+        tool.print_error(f"Failed to run: {e}")
+        return 1
 
     tool.print_success("Done")
     return 0

@@ -88,24 +88,32 @@ def _check_runtime(tool, ext):
 def run_script(args: list):
     tool = ToolBase()
     if not args:
-        print("Usage: alltool run <script> [-t]")
-        print("  -t: Compile temporarily in /tmp")
+        print("Usage: alltool run <script> [-t] [-- script_args...]")
+        print("  -t: Compile temporarily in /tmp (must appear before script path)")
         return 1
 
+    # Only treat -t before the script path as a flag; anything after the
+    # script path belongs to the script itself. Support `--` separator.
     temp_mode = False
     script_args = []
+    seen_script = False
     for arg in args:
-        if arg == "-t":
+        if not seen_script and arg == "-t":
             temp_mode = True
-        else:
-            script_args.append(arg)
+            continue
+        if not seen_script and arg == "--":
+            seen_script = True  # next token is the script; keep separator semantics
+            continue
+        if not seen_script:
+            seen_script = True
+        script_args.append(arg)
 
     if not script_args:
         print("Usage: alltool run <script> [-t]")
         return 1
 
     script_path = os.path.expanduser(script_args[0])
-    if not os.path.exists(script_path):
+    if not os.path.isfile(script_path):
         print(f"❌ File not found: {script_path}")
         return 1
 
@@ -121,18 +129,28 @@ def run_script(args: list):
         ".jar": ["java", "-jar"],
     }
 
-    compiled_extensions = {".c", ".cc", ".cpp", ".cxx", ".rs", ".go", ".zig"}
+    compiled_extensions = {".c", ".cc", ".cpp", ".cxx"}
+    # NOTE: .rs/.go/.zig are detected by the C lib but the pure-Python
+    # fallback only handles C/C++. They are intentionally NOT listed here;
+    # with the C lib present they still work via AllToolCompiler.
 
     if ext in script_extensions:
         if not _check_runtime(tool, ext):
             return 1
         cmd = script_extensions[ext] + [script_path] + script_args[1:]
         print(f"🚀 Running {ext[1:].upper()} script...")
-        return subprocess.run(cmd).returncode
+        try:
+            return subprocess.run(cmd, timeout=300).returncode
+        except subprocess.TimeoutExpired:
+            tool.print_error("Execution timed out.")
+            return 124
 
-    elif ext in compiled_extensions:
+    elif ext in compiled_extensions or ext in {".rs", ".go", ".zig"}:
         compiler = AllToolCompiler()
-        cache_dir = str(HOME_DIR / "cache") if not temp_mode else "/tmp"
+        if ext not in compiled_extensions and compiler._lib is None:
+            print(f"❌ '{ext}' requires the C compiler library (run `make build-c`).")
+            return 1
+        cache_dir = str(HOME_DIR / "cache") if not temp_mode else None
         result = compiler.compile_and_run(
             script_path,
             cache_dir=cache_dir,
@@ -148,11 +166,26 @@ def run_script(args: list):
         return result.exit_code
 
     else:
-        with open(script_path, "r") as f:
-            first_line = f.readline().strip()
+        try:
+            with open(script_path, "r") as f:
+                first_line = f.readline().strip()
+        except (OSError, UnicodeDecodeError) as e:
+            print(f"❌ Cannot read script: {e}")
+            return 1
         if first_line.startswith("#!"):
+            if not os.access(script_path, os.X_OK):
+                print(f"❌ File is not executable (shebang found but +x missing): {script_path}")
+                print(f"   Run: chmod +x {script_path}")
+                return 1
             print(f"🚀 Running via shebang: {first_line}")
-            return subprocess.run([script_path] + script_args[1:]).returncode
+            try:
+                return subprocess.run([script_path] + script_args[1:], timeout=300).returncode
+            except subprocess.TimeoutExpired:
+                tool.print_error("Execution timed out.")
+                return 124
+            except PermissionError as e:
+                print(f"❌ Cannot execute: {e}")
+                return 1
         else:
             print("❌ Unknown script type. Please specify manually.")
             return 1

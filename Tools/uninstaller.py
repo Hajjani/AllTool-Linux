@@ -35,8 +35,32 @@ def uninstall(args: list):
             pass
 
     unfound = []
+    # Allowlist: only delete inside HOME_DIR or the known ~/bin entry points.
+    # Prevents a tampered installed_files list from deleting arbitrary paths.
+    bin_dir = Path.home() / "bin"
+    allowed_roots = [HOME_DIR.resolve(), bin_dir.resolve()]
+    allowed_names = {"alltool", "AllTool.py", "AllTools.py", "Tools"}
+
+    def _allowed(path: Path) -> bool:
+        try:
+            rp = path.resolve()
+        except OSError:
+            return False
+        for root in allowed_roots:
+            try:
+                if rp == root or root in rp.parents:
+                    return True
+            except OSError:
+                continue
+        # Also allow the exact ~/bin entry points by name even if ~/bin moved.
+        return rp.parent == bin_dir.resolve() and rp.name in allowed_names
+
     for file_path in installed_files:
         path = Path(file_path)
+        if not _allowed(path):
+            tool.print_warning(f"Skipped (outside allowed roots): {path}")
+            unfound.append(str(path))
+            continue
         if path.exists():
             try:
                 if path.is_file() or path.is_symlink():
@@ -64,5 +88,25 @@ def uninstall(args: list):
     except Exception as e:
         tool.print_error(f"Failed to remove config directory: {e}")
 
+    # Remove ~/bin entry points installed by installer.sh (not in installed_files).
+    for name in ("alltool", "AllTool.py", "AllTools.py"):
+        p = bin_dir / name
+        try:
+            if p.is_file() or p.is_symlink():
+                p.unlink()
+                tool.print_success(f"Removed: {p}")
+        except Exception as e:
+            tool.print_warning(f"Could not remove {p}: {e}")
+    tools_pkg = bin_dir / "Tools"
+    try:
+        if tools_pkg.is_dir():
+            import shutil
+            shutil.rmtree(tools_pkg)
+            tool.print_success(f"Removed: {tools_pkg}")
+    except Exception as e:
+        tool.print_warning(f"Could not remove {tools_pkg}: {e}")
+
     tool.print_success("AllTool uninstalled successfully!")
+    print("Note: pip package (if installed via 'pip install -e .') must be removed separately:")
+    print("  pip3 uninstall -y alltool")
     return 0

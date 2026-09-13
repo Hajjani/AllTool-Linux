@@ -1,9 +1,9 @@
 {
-  "version": "2.0.0",
-  "home_dir": "/home/debian/.config/alltool",
-  "bin_dir": "/home/debian/.config/alltool/bin",
-  "cache_dir": "/home/debian/.config/alltool/cache",
-  "logs_dir": "/home/debian/.config/alltool/logs",
+  "version": "3.2.0",
+  "home_dir": "~/.config/alltool",
+  "bin_dir": "~/.config/alltool/bin",
+  "cache_dir": "~/.config/alltool/cache",
+  "logs_dir": "~/.config/alltool/logs",
   "shm_path": "/dev/shm/alltool_chain",
   "sudo":{"cached":true,"username":"debian","encrypted_password":"0524e05c2fa740aeb93b93a0","salt":"63458b395fc633ddce54e1c438e61dfd"},
   "compiler": {
@@ -13,10 +13,10 @@
     "temp_dir": "/tmp/alltool_compile"
   },
   "installed_files": [
-    "/home/debian/.config/alltool/.confs.json",
-    "/home/debian/.config/alltool/.help.json",
-    "/home/debian/.config/alltool/bin/alltool_runner",
-    "/home/debian/.config/alltool/bin/liballtool_shm.so"
+    "~/.config/alltool/.confs.json",
+    "~/.config/alltool/.help.json",
+    "~/.config/alltool/bin/alltool_runner",
+    "~/.config/alltool/bin/liballtool_shm.so"
   ],
   "tools": {
     "create": {},

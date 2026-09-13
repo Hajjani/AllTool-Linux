@@ -10,12 +10,20 @@ def refresh(args: list):
     config = tool.config
     bin_dir = config.get("bin_dir", str(tool.home_dir / "bin"))
 
-    subprocess.run(["chmod", "+x", bin_dir + "/alltool_runner"])
+    runner = os.path.join(bin_dir, "alltool_runner")
+    if os.path.exists(runner):
+        try:
+            subprocess.run(["chmod", "+x", runner], timeout=10)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            tool.print_warning(f"Could not chmod runner: {e}")
+    else:
+        tool.print_warning(f"Runner not found (skipping chmod): {runner}")
 
-    shell = os.environ.get("SHELL", "")
-    if "zsh" in shell:
+    # Detect shell from $SHELL, falling back to bashrc if unknown.
+    shell = os.path.basename(os.environ.get("SHELL", ""))
+    if shell == "zsh":
         config_file = os.path.expanduser("~/.zshrc")
-    elif "bash" in shell:
+    elif shell in ("bash", "sh", ""):
         config_file = os.path.expanduser("~/.bashrc")
     else:
         config_file = os.path.expanduser("~/.profile")
@@ -23,9 +31,14 @@ def refresh(args: list):
     path_line = f'export PATH="{bin_dir}:$PATH"'
     already_set = False
     if os.path.exists(config_file):
-        with open(config_file, "r") as f:
-            if path_line in f.read():
-                already_set = True
+        try:
+            with open(config_file, "r") as f:
+                for line in f:  # stream instead of reading whole file
+                    if path_line in line:
+                        already_set = True
+                        break
+        except OSError as e:
+            tool.print_warning(f"Could not read {config_file}: {e}")
 
     if not already_set:
         with open(config_file, "a") as f:
@@ -40,7 +53,7 @@ def refresh(args: list):
 
 @command("sf", aliases=["ls"], help_text="Show files in current directory")
 def show_files(args: list):
-    subprocess.run(["ls", "-la"])
+    subprocess.run(["ls", "-la"], timeout=10)
     return 0
 
 def _check_inxi(tool):
@@ -57,7 +70,7 @@ def system_info(args: list):
     tool = ToolBase()
     if not _check_inxi(tool):
         return 1
-    subprocess.run(["inxi", "-F"])
+    subprocess.run(["inxi", "-F"], timeout=30)
     return 0
 
 @command("up", aliases=["update-check"], help_text="Check for system updates")
@@ -65,7 +78,11 @@ def check_updates(args: list):
     tool = ToolBase()
     if tool.has_command("apt"):
         tool.print_status("Checking for updates (APT)...")
-        subprocess.run(["sudo", "apt", "update"], stdout=subprocess.DEVNULL)
+        try:
+            subprocess.run(["sudo", "apt", "update"], stdout=subprocess.DEVNULL, timeout=120)
+        except subprocess.TimeoutExpired:
+            tool.print_error("apt update timed out.")
+            return 1
         output = tool.get_output(["apt", "list", "--upgradable"])
         lines = [line for line in output.splitlines() if "/" in line]
         if lines:
@@ -106,7 +123,7 @@ def check_updates(args: list):
 
 @command("cl", aliases=["clear"], help_text="Clear terminal")
 def clear_terminal(args: list):
-    subprocess.run(["clear"])
+    subprocess.run(["clear"], timeout=5)
     return 0
 
 @command("requirement", aliases=["req"], help_text="Check if alltool dependencies are installed")
@@ -242,8 +259,11 @@ def check_requirements(args: list):
                 missing_count += 1
                 hint = "  → pip install " + tool_name
         else:
-            result = subprocess.run(["which", tool_name], stdout=subprocess.DEVNULL)
-            if result.returncode == 0:
+            try:
+                result = subprocess.run(["which", tool_name], stdout=subprocess.DEVNULL, timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                result = None
+            if result is not None and result.returncode == 0:
                 status = "✅ Installed"
                 hint = ""
             else:

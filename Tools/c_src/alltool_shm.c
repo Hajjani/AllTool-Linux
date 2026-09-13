@@ -18,15 +18,27 @@ static sem_t *get_semaphore(alltool_shm_t *shm) {
 }
 
 int alltool_shm_init(const char *name, size_t size) {
+    size_t need = sizeof(alltool_shm_t) + sizeof(sem_t);
+    if (size < need) size = need;
     int fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
     if (fd < 0) {
         if (errno == EEXIST) {
             fd = shm_open(name, O_RDWR, 0600);
             if (fd < 0) return -1;
             struct stat st;
-            if (fstat(fd, &st) == 0 && st.st_size >= (off_t)size) {
-                return 0;
+            int ok = 0;
+            if (fstat(fd, &st) == 0 && st.st_size >= (off_t)need) {
+                void *v = mmap(NULL, st.st_size, PROT_READ, MAP_SHARED, fd, 0);
+                if (v != MAP_FAILED) {
+                    alltool_shm_t *e = (alltool_shm_t *)v;
+                    if (e->magic == SHM_MAGIC && e->version == SHM_VERSION && e->initialized)
+                        ok = 1;
+                    munmap(v, st.st_size);
+                }
             }
+            // Always close the probe fd; attach() opens its own.
+            close(fd);
+            return ok ? 0 : -1;
         }
         return -1;
     }
@@ -75,7 +87,7 @@ int alltool_shm_attach(const char *name, alltool_chain_ctx_t *ctx) {
     }
 
     alltool_shm_t *shm = (alltool_shm_t *)ptr;
-    if (shm->magic != SHM_MAGIC || !shm->initialized) {
+    if (shm->magic != SHM_MAGIC || shm->version != SHM_VERSION || !shm->initialized) {
         munmap(ptr, st.st_size);
         close(fd);
         return -1;
@@ -117,34 +129,30 @@ int alltool_shm_register_process(alltool_chain_ctx_t *ctx, pid_t pid, int32_t pr
 int alltool_shm_wait_predecessor(alltool_chain_ctx_t *ctx, int timeout_ms) {
     if (!ctx || !ctx->shm || ctx->my_index == UINT32_MAX) return -1;
     if (ctx->my_predecessor < 0) return 0;
+    if (ctx->my_predecessor >= ALLTOOL_MAX_PROCESSES) return -1;
 
     sem_t *sem = get_semaphore(ctx->shm);
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    ts.tv_sec += timeout_ms / 1000;
-    ts.tv_nsec += (timeout_ms % 1000) * 1000000;
-    if (ts.tv_nsec >= 1000000000) {
-        ts.tv_nsec -= 1000000000;
-        ts.tv_sec++;
-    }
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
 
     while (1) {
-        sem_wait(sem);
-        if (ctx->shm->states[ctx->my_predecessor] == ALLTOOL_PROC_DONE ||
-            ctx->shm->states[ctx->my_predecessor] == ALLTOOL_PROC_ERROR) {
-            sem_post(sem);
-            return ctx->shm->states[ctx->my_predecessor] == ALLTOOL_PROC_DONE ? 0 : -1;
-        }
+        int state;
+        // Short critical section only; never block on timedwait with the mutex held.
+        if (sem_wait(sem) != 0) return -1;
+        state = ctx->shm->states[ctx->my_predecessor];
         sem_post(sem);
+        if (state == ALLTOOL_PROC_DONE) return 0;
+        if (state == ALLTOOL_PROC_ERROR) return -1;
 
         if (timeout_ms >= 0) {
-            if (sem_timedwait(sem, &ts) == -1 && errno == ETIMEDOUT) {
-                return -1;
-            }
-        } else {
-            sem_wait(sem);
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            long elapsed = (long)(now.tv_sec - start.tv_sec) * 1000
+                + (long)(now.tv_nsec - start.tv_nsec) / 1000000;
+            if (elapsed >= timeout_ms) return -1;
         }
-        usleep(1000);
+        // Poll interval 1ms.
+        struct timespec rq = { .tv_sec = 0, .tv_nsec = 1000000 };
+        nanosleep(&rq, NULL);
     }
 }
 

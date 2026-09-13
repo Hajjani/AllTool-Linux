@@ -458,7 +458,40 @@ int alltool_sudo_run_with_creds(const char *username, const char *password, cons
     return WEXITSTATUS(status);
 }
 
+/* Bounded file read: rejects ftell errors, empty/huge files (max 1 MiB). */
+#define SUDO_MAX_CONFIG (1024 * 1024)
+
+static char *read_config_file(const char *config_path) {
+    FILE *f = fopen(config_path, "r");
+    if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long len = ftell(f);
+    if (len < 0 || len > SUDO_MAX_CONFIG) { fclose(f); return NULL; }
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return NULL; }
+    char *buf = malloc((size_t)len + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t got = fread(buf, 1, (size_t)len, f);
+    fclose(f);
+    if (got != (size_t)len) { free(buf); return NULL; }
+    buf[len] = '\0';
+    return buf;
+}
+
+/* Strict `"cached": true|false` parse (no substring false-positives). */
+static int parse_cached_bool(const char *json_str) {
+    const char *p = strstr(json_str, "\"cached\"");
+    if (!p) return 0;
+    p = strchr(p, ':');
+    if (!p) return 0;
+    p++;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    if (strncmp(p, "true", 4) == 0) return 1;
+    return 0;
+}
+
 int alltool_sudo_cache_credentials(const char *config_path, const char *username, const char *password) {
+    if (!config_path || !username || !password) return -1;
+    if (!valid_username(username)) return -1;
     char *salt = NULL;
     if (alltool_sudo_generate_salt(&salt) != 0) return -1;
 
@@ -468,22 +501,19 @@ int alltool_sudo_cache_credentials(const char *config_path, const char *username
         return -1;
     }
 
-    FILE *f = fopen(config_path, "r");
-    char *json_str = NULL;
-    if (f) {
-        fseek(f, 0, SEEK_END);
-        long len = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        json_str = malloc(len + 1);
-        fread(json_str, 1, len, f);
-        json_str[len] = '\0';
-        fclose(f);
+    char *json_str = read_config_file(config_path);
+    // Exact-size allocation: existing doc + new sudo object + NUL.
+    size_t need = (json_str ? strlen(json_str) : 0)
+        + strlen(username) + strlen(encrypted) + strlen(salt) + 256;
+    char *new_json = malloc(need);
+    if (!new_json) {
+        free(json_str); free(salt); free(encrypted);
+        return -1;
     }
-
-    char *new_json = malloc((json_str ? strlen(json_str) : 2) + 512);
     if (json_str && strstr(json_str, "\"sudo\"")) {
         char *sudo_start = strstr(json_str, "\"sudo\"");
         char *brace_start = strchr(sudo_start, '{');
+        if (!brace_start) { free(new_json); free(json_str); free(salt); free(encrypted); return -1; }
         int depth = 0;
         char *brace_end = brace_start;
         while (*brace_end) {
@@ -494,18 +524,62 @@ int alltool_sudo_cache_credentials(const char *config_path, const char *username
             }
             brace_end++;
         }
-        size_t prefix_len = sudo_start - json_str;
-        size_t suffix_len = strlen(brace_end + 1);
-        snprintf(new_json, prefix_len + 512 + suffix_len + 1,
+        if (depth != 0) { free(new_json); free(json_str); free(salt); free(encrypted); return -1; }
+        size_t prefix_len = (size_t)(sudo_start - json_str);
+        const char *suffix = brace_end + 1;
+        int n = snprintf(new_json, need,
             "%.*s\"sudo\":{\"cached\":true,\"username\":\"%s\",\"encrypted_password\":\"%s\",\"salt\":\"%s\"}%s",
-            (int)prefix_len, json_str, username, encrypted, salt, brace_end + 1);
+            (int)prefix_len, json_str, username, encrypted, salt, suffix);
+        if (n < 0 || (size_t)n >= need) {
+            free(new_json); free(json_str); free(salt); free(encrypted);
+            return -1;
+        }
+    } else if (json_str && strlen(json_str) > 0) {
+        // Preserve existing keys: insert ,"sudo":{...} before final '}'.
+        char *end = strrchr(json_str, '}');
+        if (!end) { free(new_json); free(json_str); free(salt); free(encrypted); return -1; }
+        size_t prefix_len = (size_t)(end - json_str);
+        // Trim trailing whitespace before '}'.
+        while (prefix_len > 0 && (json_str[prefix_len-1] == ' ' || json_str[prefix_len-1] == '\n'
+               || json_str[prefix_len-1] == '\t' || json_str[prefix_len-1] == '\r'))
+            prefix_len--;
+        int empty = 1;
+        for (size_t i = 0; i < prefix_len; i++) {
+            if (json_str[i] == '{') { empty = 1; }
+            else if (json_str[i] != ' ' && json_str[i] != '\n' && json_str[i] != '\t'
+                     && json_str[i] != '\r' && json_str[i] != '{') { empty = 0; break; }
+        }
+        // Re-scan: object is empty iff only whitespace between { and }.
+        empty = 1;
+        char *open = strchr(json_str, '{');
+        if (open) {
+            for (char *q = open + 1; q < end; q++) {
+                if (*q != ' ' && *q != '\n' && *q != '\t' && *q != '\r') { empty = 0; break; }
+            }
+        }
+        int n;
+        if (empty) {
+            n = snprintf(new_json, need, "%.*s\"sudo\":{\"cached\":true,\"username\":\"%s\",\"encrypted_password\":\"%s\",\"salt\":\"%s\"}%s",
+                (int)prefix_len, json_str, username, encrypted, salt, end);
+        } else {
+            n = snprintf(new_json, need, "%.*s,\"sudo\":{\"cached\":true,\"username\":\"%s\",\"encrypted_password\":\"%s\",\"salt\":\"%s\"}%s",
+                (int)prefix_len, json_str, username, encrypted, salt, end);
+        }
+        if (n < 0 || (size_t)n >= need) {
+            free(new_json); free(json_str); free(salt); free(encrypted);
+            return -1;
+        }
     } else {
-        snprintf(new_json, 512,
+        int n = snprintf(new_json, need,
             "{\"version\":\"2.0.0\",\"sudo\":{\"cached\":true,\"username\":\"%s\",\"encrypted_password\":\"%s\",\"salt\":\"%s\"}}",
             username, encrypted, salt);
+        if (n < 0 || (size_t)n >= need) {
+            free(new_json); free(json_str); free(salt); free(encrypted);
+            return -1;
+        }
     }
 
-    f = fopen(config_path, "w");
+    FILE *f = fopen(config_path, "w");
     if (!f) {
         free(new_json);
         free(json_str);
@@ -517,6 +591,7 @@ int alltool_sudo_cache_credentials(const char *config_path, const char *username
     fprintf(f, "%s", new_json);
     fclose(f);
 
+    secure_zero(encrypted, strlen(encrypted));
     free(new_json);
     free(json_str);
     free(salt);
@@ -525,21 +600,13 @@ int alltool_sudo_cache_credentials(const char *config_path, const char *username
 }
 
 int alltool_sudo_load_credentials(const char *config_path, alltool_sudo_creds_t *creds) {
+    if (!config_path || !creds) return -1;
     memset(creds, 0, sizeof(alltool_sudo_creds_t));
 
-    FILE *f = fopen(config_path, "r");
-    if (!f) return -1;
+    char *json_str = read_config_file(config_path);
+    if (!json_str) return -1;
 
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *json_str = malloc(len + 1);
-    fread(json_str, 1, len, f);
-    json_str[len] = '\0';
-    fclose(f);
-
-    char *cached = strstr(json_str, "\"cached\"");
-    if (!cached || strstr(cached, "false")) {
+    if (!parse_cached_bool(json_str)) {
         free(json_str);
         return -1;
     }
@@ -568,12 +635,23 @@ static char *extract_json_value(char *start) {
     start = strchr(start, '"');
     if (!start) return NULL;
     start++;
-    char *end = strchr(start, '"');
-    if (!end) return NULL;
-    size_t len = end - start;
-    char *val = malloc(len + 1);
-    memcpy(val, start, len);
-    val[len] = '\0';
+    // Handle \" escapes so values containing quotes don't truncate early.
+    char *p = start;
+    size_t out_len = 0;
+    while (*p && *p != '"') {
+        if (*p == '\\' && p[1]) { p += 2; out_len++; }
+        else { p++; out_len++; }
+    }
+    if (!*p) return NULL;
+    char *val = malloc(out_len + 1);
+    if (!val) return NULL;
+    char *dst = val;
+    p = start;
+    while (*p && *p != '"') {
+        if (*p == '\\' && p[1]) { p++; *dst++ = *p++; }
+        else *dst++ = *p++;
+    }
+    *dst = '\0';
     return val;
 }
 
@@ -586,20 +664,14 @@ void alltool_sudo_free_creds(alltool_sudo_creds_t *creds) {
 }
 
 int alltool_sudo_clear_cache(const char *config_path) {
-    FILE *f = fopen(config_path, "r");
-    if (!f) return -1;
-
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *json_str = malloc(len + 1);
-    fread(json_str, 1, len, f);
-    json_str[len] = '\0';
-    fclose(f);
+    if (!config_path) return -1;
+    char *json_str = read_config_file(config_path);
+    if (!json_str) return -1;
 
     char *sudo_start = strstr(json_str, "\"sudo\"");
     if (sudo_start) {
         char *brace_start = strchr(sudo_start, '{');
+        if (!brace_start) { free(json_str); return -1; }
         int depth = 0;
         char *brace_end = brace_start;
         while (*brace_end) {
@@ -610,14 +682,18 @@ int alltool_sudo_clear_cache(const char *config_path) {
             }
             brace_end++;
         }
-        size_t prefix_len = sudo_start - json_str;
-        size_t suffix_len = strlen(brace_end + 1);
-        char *new_json = malloc(prefix_len + 200 + suffix_len + 1);
-        snprintf(new_json, prefix_len + 200 + suffix_len + 1,
+        if (depth != 0) { free(json_str); return -1; }
+        size_t prefix_len = (size_t)(sudo_start - json_str);
+        const char *suffix = brace_end + 1;
+        size_t need = prefix_len + strlen(suffix) + 128;
+        char *new_json = malloc(need);
+        if (!new_json) { free(json_str); return -1; }
+        int n = snprintf(new_json, need,
             "%.*s\"sudo\":{\"cached\":false,\"username\":\"\",\"encrypted_password\":\"\",\"salt\":\"\"}%s",
-            (int)prefix_len, json_str, brace_end + 1);
+            (int)prefix_len, json_str, suffix);
+        if (n < 0 || (size_t)n >= need) { free(new_json); free(json_str); return -1; }
 
-        f = fopen(config_path, "w");
+        FILE *f = fopen(config_path, "w");
         if (f) {
             fprintf(f, "%s", new_json);
             fclose(f);

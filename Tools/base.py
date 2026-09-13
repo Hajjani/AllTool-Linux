@@ -23,19 +23,25 @@ class ToolBase:
             self._sudo = AllToolSudo()
         return self._sudo
 
-    def run_cmd(self, cmd: List[str], capture: bool = False, check: bool = True) -> subprocess.CompletedProcess:
-        return subprocess.run(cmd, capture_output=capture, text=True, check=check)
+    def run_cmd(self, cmd: List[str], capture: bool = False, check: bool = True, timeout: int = 60) -> subprocess.CompletedProcess:
+        return subprocess.run(cmd, capture_output=capture, text=True, check=check, timeout=timeout)
 
     def get_output(self, cmd: List[str]) -> str:
         try:
             result = self.run_cmd(cmd, capture=True, check=True)
             return result.stdout.strip()
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
             return ""
 
     def has_command(self, cmd: str) -> bool:
+        import shutil
         try:
-            result = subprocess.run(["which", cmd], capture_output=True, check=False)
+            if shutil.which(cmd) is not None:
+                return True
+        except Exception:
+            pass
+        try:
+            result = subprocess.run(["which", cmd], capture_output=True, check=False, timeout=5)
             return result.returncode == 0
         except Exception:
             return False
@@ -43,7 +49,10 @@ class ToolBase:
     def confirm(self, message: str, default: bool = False) -> bool:
         suffix = " [Y/n]: " if default else " [y/N]: "
         while True:
-            response = input(message + suffix).strip().lower()
+            try:
+                response = input(message + suffix).strip().lower()
+            except EOFError:
+                return default
             if not response:
                 return default
             if response in ("y", "yes"):
@@ -54,9 +63,15 @@ class ToolBase:
 
     def sudo_run(self, cmd: List[str], cache: bool = False) -> subprocess.CompletedProcess:
         if cache:
-            creds = self.sudo.load_credentials(str(self.home_dir / ".confs.json"))
-            if creds and creds["cached"]:
-                return self._run_with_cached_sudo(cmd, creds)
+            try:
+                creds = self.sudo.load_credentials(str(self.home_dir / ".confs.json"))
+            except Exception:
+                creds = None
+            if creds and creds.get("cached"):
+                try:
+                    return self._run_with_cached_sudo(cmd, creds)
+                except RuntimeError:
+                    pass  # C lib missing: fall back to plain sudo below.
 
         full_cmd = ["sudo"] + cmd
         return self.run_cmd(full_cmd)

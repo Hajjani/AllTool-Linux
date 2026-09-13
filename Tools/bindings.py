@@ -285,6 +285,8 @@ class AllToolCompiler:
         """Fallback when the C lib is not built. Handles C/C++ only."""
         import hashlib
         import os
+        import shlex
+        import tempfile
         ext = os.path.splitext(source_path)[1].lower()
         cc = _C_EXTS.get(ext)
         if cc is None:
@@ -293,24 +295,60 @@ class AllToolCompiler:
                                    None, 0.0, 0.0)
         if shutil.which(cc) is None:
             return CompileResultPy(1, None, f"❌ Compiler '{cc}' not found.", None, 0.0, 0.0)
+        try:
+            st = os.stat(source_path)
+        except OSError as e:
+            return CompileResultPy(1, None, f"❌ Cannot stat source: {e}", None, 0.0, 0.0)
         if output_path:
             exe = output_path
         elif temp_mode:
-            exe = f"/tmp/alltool_{os.getpid()}"
+            # Secure unique temp file (no PID prediction / symlink race).
+            fd, exe = tempfile.mkstemp(prefix="alltool_")
+            os.close(fd)
         else:
-            h = hashlib.sha256(f"{source_path}:{compiler_flags}".encode()).hexdigest()[:16]
+            # Include content mtime+size so edits invalidate the cache.
+            # (Content hash would be better but requires reading the file;
+            # mtime+size+flags matches the C implementation's approach.)
+            h = hashlib.sha256(
+                f"{os.path.realpath(source_path)}:{st.st_mtime_ns}:{st.st_size}:{compiler_flags}".encode()
+            ).hexdigest()[:16]
             base = cache_dir or str(HOME_DIR / "cache")
             os.makedirs(base, exist_ok=True)
             exe = os.path.join(base, f"alltool_{h}")
+            # Reuse cache only if binary is newer than source.
+            try:
+                if os.path.exists(exe) and os.stat(exe).st_mtime_ns >= st.st_mtime_ns:
+                    pass  # cache hit: skip recompile below? we still recompile
+                    # to be safe against flag changes; mtime check avoids stale runs
+                    # when compilation is skipped in future. For now always recompile
+                    # to guarantee flag changes take effect.
+            except OSError:
+                pass
         t0 = time.perf_counter()
-        comp = subprocess.run([cc, source_path, "-o", exe] + compiler_flags.split(),
-                              capture_output=True, text=True)
+        try:
+            flags = shlex.split(compiler_flags)
+        except ValueError as e:
+            return CompileResultPy(1, None, f"❌ Bad compiler flags: {e}", None, 0.0, 0.0)
+        try:
+            comp = subprocess.run([cc, source_path, "-o", exe] + flags,
+                                  capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            return CompileResultPy(124, None, "❌ Compilation timed out.", None,
+                                   (time.perf_counter() - t0) * 1000.0, 0.0)
         compile_ms = (time.perf_counter() - t0) * 1000.0
         if comp.returncode != 0:
+            try:
+                if temp_mode and not output_path and os.path.exists(exe):
+                    os.unlink(exe)
+            except OSError:
+                pass
             return CompileResultPy(comp.returncode, None, comp.stderr.strip() or "compilation failed",
                                    None, compile_ms, 0.0)
         t1 = time.perf_counter()
-        run = subprocess.run([exe], capture_output=True, text=True)
+        try:
+            run = subprocess.run([exe], capture_output=True, text=True, timeout=120)
+        except subprocess.TimeoutExpired:
+            return CompileResultPy(124, exe, "❌ Execution timed out.", None, compile_ms, 120000.0)
         exec_ms = (time.perf_counter() - t1) * 1000.0
         return CompileResultPy(run.returncode, exe, None, run.stdout, compile_ms, exec_ms)
 

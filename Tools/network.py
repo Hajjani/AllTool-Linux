@@ -49,25 +49,36 @@ def search_web(args: list):
             return 0
 
         soup = BeautifulSoup(response.text, "html.parser")
-        results = soup.find_all("div", class_="result__body")
+        # DuckDuckGo changes markup often: try new (.result__body) then
+        # legacy (.result) selectors so one layout change doesn't kill us.
+        results = soup.find_all("div", class_="result__body") or soup.find_all("div", class_="result")
 
         if not results:
             print("❌ No results could be extracted.")
-            return 0
+            return 1
 
         print("\n📚 Search Results:\n")
-        for i, result in enumerate(results[:5], 1):
-            title = result.find("a", class_="result__a")
-            snippet = result.find("a", class_="result__snippet")
+        shown = 0
+        for i, result in enumerate(results[:10], 1):
+            title = result.find("a", class_="result__a") or result.find("a", class_="result__title")
+            snippet = result.find("a", class_="result__snippet") or result.find("div", class_="result__snippet")
             if title and snippet:
-                print(f"{i}. {title.text.strip()}")
-                print(f"   {snippet.text.strip()}\n")
+                print(f"{shown + 1}. {title.get_text(strip=True)}")
+                print(f"   {snippet.get_text(strip=True)}\n")
+                shown += 1
+                if shown >= 5:
+                    break
+        if shown == 0:
+            print("❌ No results could be extracted.")
+            return 1
+        return 0
 
     except ImportError:
         tool.print_error("Missing packages. Install with: pip install requests beautifulsoup4")
+        return 1
     except Exception as e:
         tool.print_error(f"Error: {e}")
-    return 0
+        return 1
 
 @command("wea", aliases=["weather"], help_text="Get weather information for a city")
 def weather(args: list):
@@ -75,21 +86,28 @@ def weather(args: list):
         print("Usage: alltool wea <city>")
         return 1
 
-    city = " ".join(args)
+    from urllib.parse import quote
+    city = " ".join(args).strip()
+    if not city:
+        print("❌ Empty city name.")
+        return 1
     tool = ToolBase()
     tool.print_status(f"Getting weather for: {city}")
 
     try:
         import requests
-        url = f"https://wttr.in/{city}"
+        url = f"https://wttr.in/{quote(city)}"
         params = {"format": "2"}
         resp = requests.get(url, params=params, timeout=8)
-        if resp.status_code == 200:
+        if resp.status_code == 200 and resp.text.strip():
             print(f"   {resp.text.strip()}")
+            return 0
         else:
             tool.print_error(f"Failed to get weather for '{city}'.")
+            return 1
     except ImportError:
         tool.print_error("Python package 'requests' is missing. Install with: pip install requests")
+        return 1
     except Exception as e:
         tool.print_error(f"Error: {e}")
-    return 0
+        return 1

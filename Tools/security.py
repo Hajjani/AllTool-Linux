@@ -1,7 +1,7 @@
 from .base import command, ToolBase
 import hashlib
 import string
-import random
+import secrets
 import os
 
 @command("psg", aliases=["passgen"], help_text="Generate secure password")
@@ -18,6 +18,13 @@ def password_generator(args: list):
         length = int(args[0])
     except ValueError:
         print("❌ Error: Length must be a number.")
+        return 1
+
+    if length <= 0:
+        print("❌ Error: Length must be greater than 0.")
+        return 1
+    if length > 4096:
+        print("❌ Error: Length too large (max 4096).")
         return 1
 
     use_special = "nol" not in args
@@ -39,7 +46,7 @@ def password_generator(args: list):
         print("❌ Error: No character types selected. Use at least one character set.")
         return 1
 
-    password = "".join(random.choice(chars) for _ in range(length))
+    password = "".join(secrets.choice(chars) for _ in range(length))
     print(f"✅ Generated password: {password}")
     return 0
 
@@ -71,8 +78,8 @@ def file_hash(args: list):
         return 1
 
     with open(file_path, "rb") as f:
-        data = f.read()
         hash_obj = hash_map[hash_type]()
-        hash_obj.update(data)
+        for chunk in iter(lambda: f.read(8192), b""):
+            hash_obj.update(chunk)
         print(f"🔐 {hash_type.upper()} hash of '{file_path}':\n{hash_obj.hexdigest()}")
     return 0

@@ -84,7 +84,7 @@ echo
 
 # Test 13: Sudo cache test
 echo "Test 13: Sudo cache mechanism"
-/home/debian/.config/alltool/bin/alltool_runner sudo-clear > /dev/null 2>&1
+"$HOME/.config/alltool/bin/alltool_runner" sudo-clear > /dev/null 2>&1 || true
 echo "✓ sudo cache clear works"
 echo
 

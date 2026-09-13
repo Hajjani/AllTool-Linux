@@ -27,13 +27,6 @@ detect_distro() {
 
 DISTRO=$(detect_distro)
 echo "📦 Detected distro: $DISTRO"
-
-# --- Optional package selection ------------------------------------------
-# Core packages are always installed (required). Every optional package is
-# offered individually — nothing optional is installed without consent,
-# unless -y/--yes is passed.
-#
-# Usage: ./installer.sh [-y|--yes] [--no-optional|--minimal] [-h|--help]
 INSTALL_ALL_OPTIONAL=false
 SKIP_OPTIONAL=false
 for arg in "$@"; do
@@ -51,9 +44,6 @@ for arg in "$@"; do
     esac
 done
 
-# ask_yes_no <prompt> [default=y|n] -> exit 0 = yes, 1 = no.
-# Auto-answers yes with -y/--yes, no with --no-optional or when stdin is
-# not interactive (piped/CI) so the installer never hangs on input.
 ask_yes_no() {
     local prompt="$1"
     local default="${2:-y}"
@@ -77,7 +67,6 @@ ask_yes_no() {
     [[ "$reply" =~ ^[Yy]$ ]]
 }
 
-# Per-distro package lists. Optional entries are "package|description".
 case "$DISTRO" in
     debian)
         CORE_PKGS=(make git gcc pkg-config python3 python3-pip python3-requests python3-bs4 python3-packaging)
@@ -270,6 +259,9 @@ echo "Detected power management: $POWER_MGMT"
 # Update .confs.json with power management config
 CONF_FILE="$REPO_PATH/.confs.json"
 if [ -f "$CONF_FILE" ]; then
+    # Serialize profiles as JSON via python to avoid bash @Q quoting (not valid JSON).
+    PROFILES_JSON=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1:]))" "${POWER_PROFILES[@]}")
+    POWER_MGMT_ESCAPED=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$POWER_MGMT")
     python3 << EOF
 import json
 conf_file = "$CONF_FILE"
@@ -277,8 +269,8 @@ with open(conf_file, 'r') as f:
     conf = json.load(f)
 
 conf["power_management"] = {
-    "backend": "$POWER_MGMT",
-    "profiles": $(printf '%s\n' "${POWER_PROFILES[@]@Q}")
+    "backend": $POWER_MGMT_ESCAPED,
+    "profiles": $PROFILES_JSON,
 }
 
 with open(conf_file, 'w') as f:

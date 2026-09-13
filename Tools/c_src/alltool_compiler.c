@@ -60,48 +60,65 @@ static char *compute_source_hash(const char *source_path) {
 }
 
 char *alltool_get_cache_path(const char *source_path, const char *cache_dir) {
+    if (!source_path || !cache_dir) return NULL;
     char *hash = compute_source_hash(source_path);
     if (!hash) return NULL;
 
-    char *cache_path = malloc(strlen(cache_dir) + strlen(hash) + 32);
-    sprintf(cache_path, "%s/%s", cache_dir, hash);
+    size_t need = strlen(cache_dir) + strlen(hash) + 32;
+    char *cache_path = malloc(need);
+    if (!cache_path) { free(hash); return NULL; }
+    int n = snprintf(cache_path, need, "%s/%s", cache_dir, hash);
     free(hash);
+    if (n < 0 || (size_t)n >= need) { free(cache_path); return NULL; }
     return cache_path;
 }
 
-static int run_command(const char *cmd, char **output) {
-    FILE *fp = popen(cmd, "r");
-    if (!fp) return -1;
-
+/* exec without a shell: no globbing, no $/`/`;` expansion. Filenames with
+ * spaces, quotes or semicolons become inert argv entries. */
+static int run_argv(char *const argv[], char **output) {
+    int out_pipe[2] = { -1, -1 };
+    if (pipe(out_pipe) < 0) return -1;
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(out_pipe[0]); close(out_pipe[1]);
+        return -1;
+    }
+    if (pid == 0) {
+        close(out_pipe[0]);
+        dup2(out_pipe[1], STDOUT_FILENO);
+        dup2(out_pipe[1], STDERR_FILENO);
+        close(out_pipe[1]);
+        execvp(argv[0], argv);
+        _exit(127);
+    }
+    close(out_pipe[1]);
     char buffer[4096];
     size_t total = 0;
     size_t capacity = 4096;
     char *result = malloc(capacity);
     if (!result) {
-        pclose(fp);
+        close(out_pipe[0]);
+        int st; waitpid(pid, &st, 0);
         return -1;
     }
-
-    while (fgets(buffer, sizeof(buffer), fp)) {
-        size_t len = strlen(buffer);
-        if (total + len + 1 >= capacity) {
+    ssize_t n;
+    while ((n = read(out_pipe[0], buffer, sizeof(buffer))) > 0) {
+        if (total + (size_t)n + 1 >= capacity) {
             capacity *= 2;
-            char *new_result = realloc(result, capacity);
-            if (!new_result) {
-                free(result);
-                pclose(fp);
-                return -1;
-            }
-            result = new_result;
+            char *nr = realloc(result, capacity);
+            if (!nr) { free(result); close(out_pipe[0]); int st; waitpid(pid, &st, 0); return -1; }
+            result = nr;
         }
-        memcpy(result + total, buffer, len);
-        total += len;
+        memcpy(result + total, buffer, (size_t)n);
+        total += (size_t)n;
     }
-
-    int status = pclose(fp);
+    close(out_pipe[0]);
+    int status = 0;
+    waitpid(pid, &status, 0);
     result[total] = '\0';
     *output = result;
-    return WEXITSTATUS(status);
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return -1;
 }
 
 int alltool_compile_and_run(const alltool_compile_opts_t *opts, alltool_compile_result_t *result) {
@@ -124,51 +141,97 @@ int alltool_compile_and_run(const alltool_compile_opts_t *opts, alltool_compile_
     }
 
     const char *output = opts->output_path;
+    int output_owned = 0;
     if (!output && cache_path) {
         output = cache_path;
     } else if (!output) {
         char *tmp = strdup(opts->source_path);
+        if (!tmp) { if (cache_path) free(cache_path); return -1; }
         char *base = basename(tmp);
         char *dot = strrchr(base, '.');
         if (dot) *dot = '\0';
-        output = malloc(strlen("/tmp/alltool_") + strlen(base) + 1);
-        sprintf((char *)output, "/tmp/alltool_%s", base);
+        size_t need = strlen("/tmp/alltool_") + strlen(base) + 1;
+        char *buf = malloc(need);
+        if (!buf) { free(tmp); if (cache_path) free(cache_path); return -1; }
+        int n = snprintf(buf, need, "/tmp/alltool_%s", base);
         free(tmp);
+        if (n < 0 || (size_t)n >= need) { free(buf); if (cache_path) free(cache_path); return -1; }
+        output = buf;
+        output_owned = 1;
     }
 
-    char cmd[4096];
+    // Build argv without a shell. Flags are split on whitespace (no quote
+    // handling — matches previous simple behavior but without injection).
+    char *flags_copy = NULL;
     const char *flags = opts->compiler_flags ? opts->compiler_flags : "-O2 -pipe";
-
+    // Count flag words.
+    size_t nflags = 0;
+    {
+        char *t = strdup(flags);
+        if (!t) { if (output_owned) free((void*)output); if (cache_path) free(cache_path); return -1; }
+        char *save = NULL;
+        for (char *tok = strtok_r(t, " \t\r\n", &save); tok; tok = strtok_r(NULL, " \t\r\n", &save))
+            nflags++;
+        free(t);
+    }
+    size_t max_argv = nflags + 8;
+    char **cargv = calloc(max_argv, sizeof(char *));
+    if (!cargv) { if (output_owned) free((void*)output); if (cache_path) free(cache_path); return -1; }
+    flags_copy = strdup(flags);
+    if (!flags_copy) { free(cargv); if (output_owned) free((void*)output); if (cache_path) free(cache_path); return -1; }
+    size_t ai = 0;
+    int use_flags = 1;
     switch (opts->lang) {
         case ALLTOOL_LANG_C:
-            snprintf(cmd, sizeof(cmd), "%s %s -o %s %s", compiler, flags, output, opts->source_path);
-            break;
         case ALLTOOL_LANG_CPP:
-            snprintf(cmd, sizeof(cmd), "%s %s -o %s %s", compiler, flags, output, opts->source_path);
-            break;
         case ALLTOOL_LANG_RUST:
-            snprintf(cmd, sizeof(cmd), "%s %s -o %s %s", compiler, flags, output, opts->source_path);
+            cargv[ai++] = (char *)compiler;
+            {
+                char *save = NULL;
+                for (char *tok = strtok_r(flags_copy, " \t\r\n", &save); tok; tok = strtok_r(NULL, " \t\r\n", &save))
+                    cargv[ai++] = tok;
+            }
+            cargv[ai++] = "-o";
+            cargv[ai++] = (char *)output;
+            cargv[ai++] = (char *)opts->source_path;
             break;
         case ALLTOOL_LANG_GO:
-            snprintf(cmd, sizeof(cmd), "%s build -o %s %s", compiler, output, opts->source_path);
+            use_flags = 0;
+            cargv[ai++] = (char *)compiler;
+            cargv[ai++] = "build";
+            cargv[ai++] = "-o";
+            cargv[ai++] = (char *)output;
+            cargv[ai++] = (char *)opts->source_path;
             break;
         case ALLTOOL_LANG_ZIG:
-            snprintf(cmd, sizeof(cmd), "%s build-exe %s -o %s", compiler, opts->source_path, output);
+            use_flags = 0;
+            cargv[ai++] = (char *)compiler;
+            cargv[ai++] = "build-exe";
+            cargv[ai++] = (char *)opts->source_path;
+            cargv[ai++] = "-o";
+            cargv[ai++] = (char *)output;
             break;
         default:
             result->error_message = strdup("Unsupported language");
+            free(flags_copy); free(cargv);
+            if (output_owned) free((void*)output);
             if (cache_path) free(cache_path);
             return -1;
     }
+    (void)use_flags;
+    cargv[ai] = NULL;
 
     char *compile_output = NULL;
-    int compile_status = run_command(cmd, &compile_output);
+    int compile_status = run_argv(cargv, &compile_output);
+    free(flags_copy);
+    free(cargv);
     clock_gettime(CLOCK_MONOTONIC, &end);
     result->compile_time_ms = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1e6;
 
     if (compile_status != 0) {
         result->exit_code = compile_status;
         result->error_message = compile_output ? compile_output : strdup("Compilation failed");
+        if (output_owned) free((void*)output);
         if (cache_path) free(cache_path);
         return compile_status;
     }
@@ -177,10 +240,9 @@ int alltool_compile_and_run(const alltool_compile_opts_t *opts, alltool_compile_
     result->output_path = strdup(output);
 
     clock_gettime(CLOCK_MONOTONIC, &start);
-    char run_cmd[1024];
-    snprintf(run_cmd, sizeof(run_cmd), "%s", output);
+    char *run_argv_list[2] = { (char *)output, NULL };
     char *run_output = NULL;
-    int run_status = run_command(run_cmd, &run_output);
+    int run_status = run_argv(run_argv_list, &run_output);
     clock_gettime(CLOCK_MONOTONIC, &end);
     result->exec_time_ms = (end.tv_sec - start.tv_sec) * 1000.0 + (end.tv_nsec - start.tv_nsec) / 1e6;
 
@@ -193,6 +255,7 @@ int alltool_compile_and_run(const alltool_compile_opts_t *opts, alltool_compile_
         }
     }
 
+    if (output_owned) free((void*)output);
     if (cache_path) free(cache_path);
     return run_status;
 }

@@ -9,8 +9,28 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <semaphore.h>
+#include <pwd.h>
+#include <limits.h>
 
-#define CONFIG_PATH "/home/debian/.config/alltool/.confs.json"
+static void get_config_path(char *buf, size_t bufsz) {
+    const char *home = getenv("HOME");
+    if (!home || !*home) {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw && pw->pw_dir) home = pw->pw_dir;
+    }
+    if (!home) home = "/tmp";
+    snprintf(buf, bufsz, "%s/.config/alltool/.confs.json", home);
+}
+
+static void get_cache_dir(char *buf, size_t bufsz) {
+    const char *home = getenv("HOME");
+    if (!home || !*home) {
+        struct passwd *pw = getpwuid(getuid());
+        if (pw && pw->pw_dir) home = pw->pw_dir;
+    }
+    if (!home) home = "/tmp";
+    snprintf(buf, bufsz, "%s/.config/alltool/cache", home);
+}
 
 typedef struct {
     char *name;
@@ -54,7 +74,9 @@ static int run_process_chain(alltool_process_t *processes, int count) {
 
             if (processes[i].needs_sudo) {
                 alltool_sudo_creds_t creds;
-                if (alltool_sudo_load_credentials(CONFIG_PATH, &creds) == 0) {
+                char config_path[PATH_MAX];
+                get_config_path(config_path, sizeof(config_path));
+                if (alltool_sudo_load_credentials(config_path, &creds) == 0) {
                     char *output = NULL;
                     char full_cmd[2048];
                     snprintf(full_cmd, sizeof(full_cmd), "%s", processes[i].command);
@@ -113,11 +135,14 @@ int main(int argc, char **argv) {
         alltool_compile_opts_t opts = {
             .source_path = argv[2],
             .output_path = NULL,
-            .cache_dir = "/home/debian/.config/alltool/cache",
+            .cache_dir = NULL,
             .temp_mode = temp_mode,
             .compiler_flags = "-O2 -pipe",
             .lang = alltool_detect_language(argv[2])
         };
+        char cache_dir_buf[PATH_MAX];
+        get_cache_dir(cache_dir_buf, sizeof(cache_dir_buf));
+        opts.cache_dir = cache_dir_buf;
 
         if (opts.lang == ALLTOOL_LANG_UNKNOWN) {
             char *args[argc - 2];
@@ -146,7 +171,9 @@ int main(int argc, char **argv) {
             fflush(stdout);
             char response[16];
             if (fgets(response, sizeof(response), stdin) && (response[0] == 'y' || response[0] == 'Y')) {
-                alltool_sudo_cache_credentials(CONFIG_PATH, username, password);
+                char config_path[PATH_MAX];
+                get_config_path(config_path, sizeof(config_path));
+                alltool_sudo_cache_credentials(config_path, username, password);
                 printf("Credentials cached securely.\n");
             }
             free(username);
@@ -156,7 +183,9 @@ int main(int argc, char **argv) {
     }
 
     if (strcmp(argv[1], "sudo-clear") == 0) {
-        alltool_sudo_clear_cache(CONFIG_PATH);
+        char config_path[PATH_MAX];
+        get_config_path(config_path, sizeof(config_path));
+        alltool_sudo_clear_cache(config_path);
         printf("Sudo cache cleared.\n");
         return 0;
     }
