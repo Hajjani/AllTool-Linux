@@ -13,13 +13,26 @@ def uninstall(args: list):
         print("Uninstall cancelled.")
         return 0
 
-    installed_files = get_installed_files()
+    # Clear cached sudo credentials first (same as Makefile uninstall's
+    # `alltool_runner sudo-clear`), via C lib when built, else JSON fallback.
+    try:
+        tool.sudo.clear_cache(str(HOME_DIR / ".confs.json"))
+    except Exception:
+        pass
+
+    try:
+        installed_files = get_installed_files()
+    except Exception:
+        installed_files = []
     config_path = HOME_DIR / ".confs.json"
 
     if config_path.exists():
-        with open(config_path) as f:
-            config = json.load(f)
-        installed_files = config.get("installed_files", installed_files)
+        try:
+            with open(config_path) as f:
+                config = json.load(f)
+            installed_files = config.get("installed_files", installed_files)
+        except (OSError, ValueError):
+            pass
 
     unfound = []
     for file_path in installed_files:

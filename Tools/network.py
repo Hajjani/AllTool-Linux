@@ -1,7 +1,5 @@
 from .base import command, ToolBase
 import subprocess
-import requests
-from bs4 import BeautifulSoup
 
 def _check_speedtest(tool):
     if not tool.has_command("speedtest-cli"):
@@ -36,6 +34,8 @@ def search_web(args: list):
     tool.print_status(f"Searching for: {topic}")
 
     try:
+        import requests
+        from bs4 import BeautifulSoup
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
@@ -63,8 +63,8 @@ def search_web(args: list):
                 print(f"{i}. {title.text.strip()}")
                 print(f"   {snippet.text.strip()}\n")
 
-    except requests.RequestException as e:
-        tool.print_error(f"Network error: {e}")
+    except ImportError:
+        tool.print_error("Missing packages. Install with: pip install requests beautifulsoup4")
     except Exception as e:
         tool.print_error(f"Error: {e}")
     return 0
@@ -80,6 +80,7 @@ def weather(args: list):
     tool.print_status(f"Getting weather for: {city}")
 
     try:
+        import requests
         url = f"https://wttr.in/{city}"
         params = {"format": "2"}
         resp = requests.get(url, params=params, timeout=8)
@@ -87,8 +88,8 @@ def weather(args: list):
             print(f"   {resp.text.strip()}")
         else:
             tool.print_error(f"Failed to get weather for '{city}'.")
-    except requests.RequestException as e:
-        tool.print_error(f"Network error: {e}")
+    except ImportError:
+        tool.print_error("Python package 'requests' is missing. Install with: pip install requests")
     except Exception as e:
         tool.print_error(f"Error: {e}")
     return 0

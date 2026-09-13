@@ -2,7 +2,6 @@ from .base import command, ToolBase
 import os
 import subprocess
 import sys
-import signal
 
 @command("pr", aliases=["pomodoro"], help_text="Manage Pomodoro sessions")
 def pomodoro(args: list):

@@ -2,7 +2,6 @@ from .base import command, ToolBase
 import hashlib
 import string
 import random
-import sys
 import os
 
 @command("psg", aliases=["passgen"], help_text="Generate secure password")

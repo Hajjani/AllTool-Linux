@@ -7,9 +7,21 @@ from .bindings import load_config, AllToolSudo, HOME_DIR
 
 class ToolBase:
     def __init__(self):
-        self.config = load_config()
-        self.sudo = AllToolSudo()
+        self._config = None
+        self._sudo = None
         self.home_dir = HOME_DIR
+
+    @property
+    def config(self):
+        if self._config is None:
+            self._config = load_config()
+        return self._config
+
+    @property
+    def sudo(self):
+        if self._sudo is None:
+            self._sudo = AllToolSudo()
+        return self._sudo
 
     def run_cmd(self, cmd: List[str], capture: bool = False, check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run(cmd, capture_output=capture, text=True, check=check)

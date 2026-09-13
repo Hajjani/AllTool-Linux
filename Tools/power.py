@@ -1,8 +1,16 @@
 from .base import command, ToolBase
+import getpass
 import subprocess
 import os
 import json
 from pathlib import Path
+
+
+def _current_user():
+    try:
+        return os.getlogin()
+    except OSError:
+        return getpass.getuser()
 
 BACKEND_CMDS = {
     "powerprofilesctl": "powerprofilesctl",
@@ -158,7 +166,7 @@ def power(args: list):
     commands = {
         "pwo": (["sudo", "shutdown"], "Shutting down..."),
         "pwr": (["sudo", "reboot"], "Rebooting..."),
-        "pwl": (["pkill", "-KILL", "-u", os.getlogin()], "Logging out..."),
+        "pwl": (["pkill", "-KILL", "-u", _current_user()], "Logging out..."),
         "pwsu": (["systemctl", "suspend"], "Suspending..."),
         "pwh": (["systemctl", "hibernate"], "Hibernating..."),
         "pwlo": (["xdg-screensaver", "lock"], "Locking screen..."),

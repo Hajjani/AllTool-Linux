@@ -1,7 +1,6 @@
 from .base import command, ToolBase
 import os
 import subprocess
-import json
 
 @command("refresh", help_text="Refresh script setup, update permissions, and add ~/bin to PATH")
 def refresh(args: list):
@@ -229,29 +228,19 @@ def check_requirements(args: list):
         "checkupdates": "Arch Linux update checker (up command)",
     }
 
-    python_packages = ["requests", "beautifulsoup4"]
-    builtin_modules = ["cmd", "subprocess", "os", "random", "string", "hashlib", "time", "json"]
+    python_packages = {"requests": "requests", "beautifulsoup4": "bs4"}
 
     missing_count = 0
     for tool_name, desc in requirements.items():
         if tool_name in python_packages:
             try:
-                __import__(tool_name.split("4")[0])
+                __import__(python_packages[tool_name])
                 status = "✅ Installed"
                 hint = ""
             except ImportError:
                 status = "❌ Missing"
                 missing_count += 1
                 hint = "  → pip install " + tool_name
-        elif tool_name in builtin_modules:
-            try:
-                __import__(tool_name)
-                status = "✅ Built-in"
-                hint = ""
-            except ImportError:
-                status = "❌ Missing"
-                missing_count += 1
-                hint = ""
         else:
             result = subprocess.run(["which", tool_name], stdout=subprocess.DEVNULL)
             if result.returncode == 0:
