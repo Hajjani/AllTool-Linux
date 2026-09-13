@@ -11,7 +11,7 @@ work even before `make build-c`.
 import sys
 
 from .base import registry, command, ToolBase
-from . import file_ops, system, media, network, power, script_runner, security, pomodoro, updater, uninstaller, help  # noqa: F401,E402
+from . import file_ops, system, media, network, power, script_runner, security, pomodoro, updater, uninstaller, help, search  # noqa: F401,E402
 
 __version__ = "2.0.0"
 
