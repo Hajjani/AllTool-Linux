@@ -1,0 +1,44 @@
+{
+  "version": "3.2.0",
+  "home_dir": "~/.config/alltool",
+  "bin_dir": "~/.config/alltool/bin",
+  "cache_dir": "~/.config/alltool/cache",
+  "logs_dir": "~/.config/alltool/logs",
+  "shm_path": "/dev/shm/alltool_chain",
+  "sudo":{"cached":true,"username":"debian","encrypted_password":"0524e05c2fa740aeb93b93a0","salt":"63458b395fc633ddce54e1c438e61dfd"},
+  "compiler": {
+    "default_cc": "gcc",
+    "default_cxx": "g++",
+    "flags": "-O2 -pipe",
+    "temp_dir": "/tmp/alltool_compile"
+  },
+  "installed_files": [
+    "~/.config/alltool/.confs.json",
+    "~/.config/alltool/.help.json",
+    "~/.config/alltool/bin/alltool_runner",
+    "~/.config/alltool/bin/liballtool_shm.so"
+  ],
+  "tools": {
+    "create": {},
+    "format": {},
+    "refresh": {},
+    "help": {},
+    "sound": {},
+    "netspeed": {},
+    "requirement": {},
+    "video": {},
+    "power": {},
+    "sf": {},
+    "sif": {},
+    "up": {},
+    "run": {},
+    "psg": {},
+    "hs": {},
+    "sr": {},
+    "wea": {},
+    "pr": {},
+    "cl": {},
+    "upa": {},
+    "un": {}
+  }
+}
