@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/Hajjani/AllTool-Linux/refs/heads/St
 | `create` | Create a file (and parent folders) |
 | `format` | Format a disk (ntfs, ext4, vfat) |
 | `refresh` | Refresh setup, permissions, PATH |
-| `help` | Show help (en, fr, ar, de) |
+| `help` / `search` | Show help (en, fr, ar, de) and spceified search |
 | `sound` / `video` | Play audio / video |
 | `netspeed` / `sif` / `sf` / `up` | Net speed, system info, list files, check updates |
 | `power` | Power profiles + shutdown/reboot/sleep/lock |
