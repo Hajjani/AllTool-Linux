@@ -217,7 +217,7 @@
     "sr": {
       "description": "Search the web for information using AI",
       "usage": "alltool sr <topic>",
-      "aliases": ["search"],
+      "aliases": [],
       "examples": ["alltool sr \"linux kernel\"", "alltool sr \"python asyncio\""],
       "lang": {
         "en": "Search the web for information using AI",
@@ -293,6 +293,18 @@
         "fr": "Désinstaller AllTool et tous les fichiers associés",
         "ar": "إلغاء تثبيت AllTool وجميع الملفات المرتبطة",
         "de": "AllTool und alle zugehörigen Dateien deinstallieren"
+      }
+    },
+    "search": {
+      "description": "Search commands usage by name or keyword",
+      "usage": "alltool search <command|keyword> [lang]",
+      "aliases": ["find", "lookup"],
+      "examples": ["alltool search power", "alltool search password", "alltool search video fr", "alltool search --list"],
+      "lang": {
+        "en": "Search commands usage by name or keyword",
+        "fr": "Rechercher l'utilisation des commandes par nom ou mot-clé",
+        "ar": "البحث عن استخدام الأوامر بالاسم أو الكلمة المفتاحية",
+        "de": "Befehlsverwendung nach Name oder Stichwort suchen"
       }
     }
   }

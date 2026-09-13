@@ -19,7 +19,7 @@ def netspeed(args: list):
     subprocess.run(["speedtest-cli"])
     return 0
 
-@command("sr", aliases=["search"], help_text="Search the web for information")
+@command("sr", help_text="Search the web for information")
 def search_web(args: list):
     if not args:
         print("Usage: alltool sr <search topic>")
