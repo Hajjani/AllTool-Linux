@@ -6,3 +6,4 @@
 ### Notice:
 - If something breaks, it may take time to fix.
 - Not all of the features may make their way into the final release.
+- You may have to manually install dependencies, configure settings and move files.
