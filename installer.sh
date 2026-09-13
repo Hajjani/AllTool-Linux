@@ -1,6 +1,4 @@
 #!/bin/bash
-# AllTool-Linux Installer
-
 set -e
 
 REPO_URL="https://github.com/Hajjani/AllTool-Linux.git"
