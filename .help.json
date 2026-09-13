@@ -1,0 +1,299 @@
+{
+  "version": "3.2.0",
+  "commands": {
+    "create": {
+      "description": "Create a file, auto-create folders if needed",
+      "usage": "alltool create <filename>",
+      "aliases": [],
+      "examples": ["alltool create src/main.py", "alltool create ~/docs/notes.txt"],
+      "lang": {
+        "en": "Create a file, auto-create folders if needed",
+        "fr": "Créer un fichier, crée les dossiers si nécessaire",
+        "ar": "إنشاء ملف، وإنشاء المجلدات تلقائيًا إذا لزم الأمر",
+        "de": "Datei erstellen, Ordner bei Bedarf automatisch"
+      }
+    },
+    "format": {
+      "description": "Format disk (types: ntfs, ext4, vfat)",
+      "usage": "alltool format <disk> <type>",
+      "aliases": [],
+      "examples": ["alltool format /dev/sdb1 ext4", "alltool format /dev/sdc1 vfat"],
+      "options": {
+        "types": ["ntfs", "ext4", "vfat"]
+      },
+      "lang": {
+        "en": "Format disk (types: ntfs, ext4, vfat)",
+        "fr": "Formater le disque (types : ntfs, ext4, vfat)",
+        "ar": "تهيئة القرص (الأنواع: ntfs، ext4، vfat)",
+        "de": "Datenträger formatieren (Typen: ntfs, ext4, vfat)"
+      }
+    },
+    "refresh": {
+      "description": "Refresh script setup, update permissions, and add ~/bin to PATH",
+      "usage": "alltool refresh",
+      "aliases": [],
+      "examples": ["alltool refresh"],
+      "lang": {
+        "en": "Refresh permissions and show PATH setup",
+        "fr": "Actualiser les permissions et afficher le PATH",
+        "ar": "تحديث الصلاحيات وعرض إعداد PATH",
+        "de": "Berechtigungen aktualisieren und PATH anzeigen"
+      }
+    },
+    "help": {
+      "description": "Show help in en, fr, ar, de",
+      "usage": "alltool help [lang]",
+      "aliases": [],
+      "examples": ["alltool help", "alltool help fr", "alltool help ar"],
+      "options": {
+        "languages": ["en", "fr", "ar", "de"]
+      },
+      "lang": {
+        "en": "Show help in en, fr, ar, de",
+        "fr": "Afficher l'aide en en, fr, ar, de",
+        "ar": "عرض المساعدة باللغات: en، fr، ar، de",
+        "de": "Hilfe anzeigen in en, fr, ar, de"
+      }
+    },
+    "sound": {
+      "description": "Play audio file or playlist (wav, mp3, ogg, flac, aac, m4a)",
+      "usage": "alltool sound <file|playlist.txt>",
+      "aliases": [],
+      "examples": ["alltool sound song.mp3", "alltool sound playlist.txt"],
+      "options": {
+        "formats": [".wav", ".mp3", ".ogg", ".flac", ".aac", ".m4a"]
+      },
+      "lang": {
+        "en": "Play audio file or playlist",
+        "fr": "Jouer un fichier audio ou une playlist",
+        "ar": "تشغيل ملف صوتي أو قائمة تشغيل",
+        "de": "Audio oder Playlist abspielen"
+      }
+    },
+    "netspeed": {
+      "description": "Measure network speed using speedtest-cli",
+      "usage": "alltool netspeed",
+      "aliases": [],
+      "examples": ["alltool netspeed"],
+      "lang": {
+        "en": "Test internet connection speed",
+        "fr": "Test de vitesse internet",
+        "ar": "اختبار سرعة الإنترنت",
+        "de": "Internet-Geschwindigkeit testen"
+      }
+    },
+    "requirement": {
+      "description": "Check if alltool dependencies are installed",
+      "usage": "alltool requirement",
+      "aliases": ["req"],
+      "examples": ["alltool requirement"],
+      "lang": {
+        "en": "Check if alltool dependencies are installed",
+        "fr": "Vérifier les dépendances installées",
+        "ar": "التحقق من المتطلبات المثبتة",
+        "de": "Überprüft installierte Abhängigkeiten"
+      }
+    },
+    "video": {
+      "description": "Play video files with ffplay",
+      "usage": "alltool video <path>",
+      "aliases": [],
+      "examples": ["alltool video movie.mp4", "alltool video ~/Videos/clip.mkv"],
+      "lang": {
+        "en": "Play video files",
+        "fr": "Lecture de fichiers vidéo",
+        "ar": "تشغيل ملفات الفيديو",
+        "de": "Videodateien abspielen"
+      }
+    },
+    "power": {
+      "description": "Manage power profiles and system control",
+      "usage": "alltool power [subcommand]",
+      "aliases": ["pwr"],
+      "subcommands": {
+        "pws": "Power-saver mode",
+        "pwn": "Balanced mode",
+        "pwp": "Performance mode",
+        "pwst": "Show current power mode",
+        "pwo": "Shutdown",
+        "pwr": "Reboot",
+        "pwl": "Logout",
+        "pwsu": "Suspend",
+        "pwh": "Hibernate",
+        "pwlo": "Lock screen"
+      },
+      "examples": ["alltool power pws", "alltool power pwst", "alltool power pwo"],
+      "lang": {
+        "en": "Manage power profiles and system control",
+        "fr": "Gestion de l'alimentation et contrôle système",
+        "ar": "إدارة الطاقة والتحكم بالنظام",
+        "de": "Energieverwaltung und Systemsteuerung"
+      }
+    },
+    "sf": {
+      "description": "Show files in current directory",
+      "usage": "alltool sf",
+      "aliases": ["ls"],
+      "examples": ["alltool sf"],
+      "lang": {
+        "en": "Show files in current directory",
+        "fr": "Afficher les fichiers du répertoire",
+        "ar": "عرض الملفات في المجلد الحالي",
+        "de": "Zeigt Dateien im aktuellen Verzeichnis"
+      }
+    },
+    "sif": {
+      "description": "Show detailed system information with inxi",
+      "usage": "alltool sif",
+      "aliases": ["sysinfo"],
+      "examples": ["alltool sif"],
+      "lang": {
+        "en": "Show detailed system information",
+        "fr": "Afficher les informations système détaillées",
+        "ar": "عرض معلومات النظام المفصلة",
+        "de": "Zeigt detaillierte Systeminformationen"
+      }
+    },
+    "up": {
+      "description": "Check for system updates",
+      "usage": "alltool up",
+      "aliases": ["update-check"],
+      "examples": ["alltool up"],
+      "lang": {
+        "en": "Check for system updates",
+        "fr": "Vérifier les mises à jour système",
+        "ar": "التحقق من تحديثات النظام",
+        "de": "Prüft auf Systemaktualisierungen"
+      }
+    },
+    "run": {
+      "description": "Auto-detect and run scripts (py, sh, js, pl, rb, php, jar, cpp). Compiles C/C++ with caching.",
+      "usage": "alltool run <script> [-t]",
+      "aliases": ["exec"],
+      "options": {
+        "-t": "Compile temporarily in /tmp, let kernel clean up"
+      },
+      "examples": ["alltool run script.py", "alltool run main.c -t", "alltool run app.cpp", "alltool run build.sh"],
+      "lang": {
+        "en": "Auto-detect and run scripts. Compiles C/C++ with caching.",
+        "fr": "Détecter et exécuter les scripts automatiquement. Compile C/C++ avec cache.",
+        "ar": "تشغيل السكربتات تلقائيًا. يجمع C/C++ مع التخزين المؤقت.",
+        "de": "Führt Skripte automatisch aus. Kompiliert C/C++ mit Caching."
+      }
+    },
+    "psg": {
+      "description": "Generate secure password",
+      "usage": "alltool psg <length> [options]",
+      "aliases": ["passgen"],
+      "options": {
+        "nose": "No lowercase",
+        "nos": "No uppercase",
+        "not": "No digits",
+        "nol": "No special characters"
+      },
+      "examples": ["alltool psg 16", "alltool psg 20 nose nos", "alltool psg 12 not nol"],
+      "lang": {
+        "en": "Generate secure password",
+        "fr": "Générer un mot de passe sécurisé",
+        "ar": "توليد كلمة مرور آمنة",
+        "de": "Generiert sicheres Passwort"
+      }
+    },
+    "hs": {
+      "description": "Calculate file hash",
+      "usage": "alltool hs <file> <type>",
+      "aliases": ["hash"],
+      "options": {
+        "types": ["md5", "sha1", "sha256", "sha512", "blake2b", "blake2s"]
+      },
+      "examples": ["alltool hs file.txt sha256", "alltool hs binary.bin blake2b"],
+      "lang": {
+        "en": "Calculate file hash",
+        "fr": "Calculer le hash d'un fichier",
+        "ar": "حساب التجزئة للملف",
+        "de": "Berechnet Dateihash"
+      }
+    },
+    "sr": {
+      "description": "Search the web for information using AI",
+      "usage": "alltool sr <topic>",
+      "aliases": ["search"],
+      "examples": ["alltool sr \"linux kernel\"", "alltool sr \"python asyncio\""],
+      "lang": {
+        "en": "Search the web for information using AI",
+        "fr": "Rechercher des informations sur le web en utilisant l'IA",
+        "ar": "البحث في الويب عن معلومات باستخدام الذكاء الاصطناعي",
+        "de": "Suche nach Informationen im Web unter Verwendung von KI"
+      }
+    },
+    "wea": {
+      "description": "Get weather information for a city",
+      "usage": "alltool wea <city>",
+      "aliases": ["weather"],
+      "examples": ["alltool wea Paris", "alltool wea \"New York\"", "alltool wea Tokyo"],
+      "lang": {
+        "en": "Get weather information for a city",
+        "fr": "Obtenir les informations météo pour une ville",
+        "ar": "الحصول على معلومات الطقس للمدينة",
+        "de": "Holt Wetterinformationen für eine Stadt"
+      }
+    },
+    "pr": {
+      "description": "Manage Pomodoro sessions",
+      "usage": "alltool pr <sessions|stop|st>",
+      "aliases": ["pomodoro"],
+      "subcommands": {
+        "<number>": "Start N Pomodoro sessions (25min work, 5min break, 15min long break every 4)",
+        "stop": "Stop running Pomodoro timer",
+        "st": "Show Pomodoro status and recent activity"
+      },
+      "examples": ["alltool pr 4", "alltool pr stop", "alltool pr st"],
+      "lang": {
+        "en": "Manage Pomodoro sessions",
+        "fr": "Gérer les sessions Pomodoro",
+        "ar": "إدارة جلسات بومودورو",
+        "de": "Pomodoro-Sitzungen verwalten"
+      }
+    },
+    "cl": {
+      "description": "Clear terminal",
+      "usage": "alltool cl",
+      "aliases": ["clear"],
+      "examples": ["alltool cl"],
+      "lang": {
+        "en": "Clear terminal",
+        "fr": "Effacer le terminal",
+        "ar": "مسح الطرفية",
+        "de": "Terminal löschen"
+      }
+    },
+    "upa": {
+      "description": "Update AllTool to stable (st) or preview (pv) version",
+      "usage": "alltool upa [st|pv]",
+      "aliases": ["update"],
+      "subcommands": {
+        "st": "Update to latest stable version",
+        "pv": "Update to latest preview version"
+      },
+      "examples": ["alltool upa st", "alltool upa pv"],
+      "lang": {
+        "en": "Update AllTool to stable or preview version",
+        "fr": "Mettre à jour AllTool vers la version stable ou preview",
+        "ar": "تحديث AllTool إلى أحدث إصدار مستقر أو تجريبي",
+        "de": "Aktualisiere AllTool auf die neueste stabile oder Vorschauversion"
+      }
+    },
+    "un": {
+      "description": "Uninstall AllTool and all associated files",
+      "usage": "alltool un",
+      "aliases": ["uninstall"],
+      "examples": ["alltool un"],
+      "lang": {
+        "en": "Uninstall AllTool and all associated files",
+        "fr": "Désinstaller AllTool et tous les fichiers associés",
+        "ar": "إلغاء تثبيت AllTool وجميع الملفات المرتبطة",
+        "de": "AllTool und alle zugehörigen Dateien deinstallieren"
+      }
+    }
+  }
+}
