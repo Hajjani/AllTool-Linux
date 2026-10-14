@@ -40,19 +40,6 @@ curl -fsSL https://raw.githubusercontent.com/Hajjani/AllTool-Linux/refs/heads/St
 | `requirement` (`req`) / `cl` (`clear`) | Check dependencies / clear terminal |
 | `version` (`-v`, `--version`) | Show version (from `.confs.json`) |
 
-## Sound playback control
-
-`sound` plays through a background player (mpv), so playback can be
-controlled any time from the terminal:
-
-```sh
-alltool sound song.mp3   # play now (or playlist.txt to queue songs)
-alltool sound st         # stop the current song (resume with pl)
-alltool sound pl         # play / resume the current song
-alltool sound rp         # repeat on/off (toggle); 'rp on' / 'rp off' to set it
-alltool sound 23%        # set volume (0%-150%)
-```
-
 ## Notes
 
 - Missing external tools (`mpv`, `ffmpeg`, `inxi`, …) print the install
