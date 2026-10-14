@@ -39,33 +39,14 @@ for arg in "$@"; do
             echo "  -y, --yes          install all optional packages without asking"
             echo "  --no-optional      skip all optional packages without asking"
             echo "  --minimal          alias of --no-optional"
+            echo ""
+            echo "  Without flags you pick optional packages by number:"
+            echo "    1. mpv    2. ffmpeg  ..."
+            echo "    > 1,2,5   (or a range like 1-3, 'all', 'none')"
             exit 0
             ;;
     esac
 done
-
-ask_yes_no() {
-    local prompt="$1"
-    local default="${2:-y}"
-    local hint reply
-
-    if [[ "$INSTALL_ALL_OPTIONAL" == "true" ]]; then
-        return 0
-    fi
-    if [[ "$SKIP_OPTIONAL" == "true" ]] || [[ ! -t 0 ]]; then
-        return 1
-    fi
-
-    if [[ "$default" == "y" ]]; then
-        hint="[Y/n]"
-    else
-        hint="[y/N]"
-    fi
-
-    read -r -p "$prompt $hint: " reply || reply=""
-    reply="${reply:-$default}"
-    [[ "$reply" =~ ^[Yy]$ ]]
-}
 
 case "$DISTRO" in
     debian)
@@ -134,6 +115,100 @@ case "$DISTRO" in
         ;;
 esac
 
+# Optional packages picker. Appends the chosen package names to the
+# array named by $1 (pass the array *name*, e.g. select_optional_packages selected).
+# Users answer with numbers separated by commas: "1,2,5" / ranges "1-3" /
+# "all" / "none". Honors -y/--yes (all) and --no-optional / non-TTY (none).
+select_optional_packages() {
+    local _out_name="$1"
+    local entry pkg desc
+    if [[ "$INSTALL_ALL_OPTIONAL" == "true" ]]; then
+        echo ""
+        echo "➕ Installing all ${#OPTIONAL_PKGS[@]} optional packages (-y/--yes given)."
+        for entry in "${OPTIONAL_PKGS[@]}"; do
+            eval "${_out_name}+=(\"\${entry%%|*}\")"
+        done
+        return 0
+    fi
+    if [[ "$SKIP_OPTIONAL" == "true" ]] || [[ ! -t 0 ]]; then
+        echo ""
+        echo "ℹ️  Skipping optional packages (non-interactive or --no-optional)."
+        echo "   Run 'alltool requirement' to see what each command needs."
+        return 0
+    fi
+    echo ""
+    echo "🧩 Optional packages — pick what to install:"
+    local idx=1
+    for entry in "${OPTIONAL_PKGS[@]}"; do
+        pkg="${entry%%|*}"
+        desc="${entry#*|}"
+        printf "  %2d. %-22s (%s)\n" "$idx" "$pkg" "$desc"
+        idx=$((idx + 1))
+    done
+    local total=${#OPTIONAL_PKGS[@]}
+    echo ""
+    echo "   Enter numbers separated by commas (e.g. 1,2,5), a range (e.g. 1-3), 'all', or 'none'."
+    local choice token tokens picked valid n lo hi already p
+    while true; do
+        read -r -p "> " choice || choice=""
+        choice="$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+        [ -z "$choice" ] && choice="none"
+        if [[ "$choice" == "all" || "$choice" == "a" ]]; then
+            for entry in "${OPTIONAL_PKGS[@]}"; do
+                eval "${_out_name}+=(\"\${entry%%|*}\")"
+            done
+            eval "echo \"➕ Selected all \${#${_out_name}[@]} packages.\""
+            break
+        fi
+        if [[ "$choice" == "none" || "$choice" == "no" || "$choice" == "n" ]]; then
+            break
+        fi
+        picked=()
+        valid=true
+        IFS=',' read -ra tokens <<< "$choice"
+        for token in "${tokens[@]}"; do
+            if [[ "$token" =~ ^[0-9]+$ ]]; then
+                lo=$token; hi=$token
+            elif [[ "$token" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+                lo=${BASH_REMATCH[1]}; hi=${BASH_REMATCH[2]}
+                # allow reversed ranges like 5-2
+                if [ "$lo" -gt "$hi" ]; then
+                    n=$lo; lo=$hi; hi=$n
+                fi
+            else
+                valid=false
+                break
+            fi
+            # strip leading zeros (avoid octal interpretation)
+            lo=$((10#$lo)); hi=$((10#$hi))
+            if [ "$lo" -lt 1 ] || [ "$hi" -gt "$total" ]; then
+                valid=false
+                break
+            fi
+            n=$lo
+            while [ "$n" -le "$hi" ]; do
+                already=false
+                for p in "${picked[@]}"; do
+                    if [ "$p" -eq "$n" ]; then already=true; break; fi
+                done
+                if [[ "$already" == "false" ]]; then
+                    picked+=("$n")
+                fi
+                n=$((n + 1))
+            done
+        done
+        if [[ "$valid" == "true" ]] && [ ${#picked[@]} -gt 0 ]; then
+            for n in "${picked[@]}"; do
+                entry="${OPTIONAL_PKGS[$((n - 1))]}"
+                eval "${_out_name}+=(\"\${entry%%|*}\")"
+            done
+            eval "echo \"➕ Selected: \${${_out_name}[*]}\""
+            break
+        fi
+        echo "❌ Invalid choice '$choice'. Use numbers 1-$total separated by commas (e.g. 1,2,5), 'all', or 'none'."
+    done
+}
+
 # Install system packages: core automatically, optional by user choice.
 install_packages() {
     local entry pkg desc
@@ -163,18 +238,8 @@ install_packages() {
             ;;
     esac
 
-    # 2. Optional — ask for each one
-    echo ""
-    echo "🧩 Optional packages — answer Y/n for each one you want."
-    echo "   (pass -y/--yes to take all, --no-optional to skip all)"
-    for entry in "${OPTIONAL_PKGS[@]}"; do
-        pkg="${entry%%|*}"
-        desc="${entry#*|}"
-        if ask_yes_no "  Install $pkg? ($desc)" "y"; then
-            selected+=("$pkg")
-            echo "    ➕ $pkg selected"
-        fi
-    done
+    # 2. Optional — numbered multi-select ("1,2,5" / "all" / "none")
+    select_optional_packages selected
 
     # 3. Install what was selected
     if [ ${#selected[@]} -eq 0 ]; then
@@ -277,6 +342,38 @@ with open(conf_file, 'w') as f:
     json.dump(conf, f, indent=2)
 
 print("Updated .confs.json with power management config")
+EOF
+fi
+
+# Stamp owner identity into .confs.json (username + acting folders).
+# `.confs.json` is the source the tool reads the user name from.
+CONF_FILE="$REPO_PATH/.confs.json"
+if [ -f "$CONF_FILE" ]; then
+    INSTALL_USER="$(whoami 2>/dev/null || id -un 2>/dev/null || echo "")"
+    INSTALL_HOME="$HOME"
+    python3 << EOF || true
+import json
+conf_file = "$CONF_FILE"
+try:
+    with open(conf_file, 'r') as f:
+        conf = json.load(f)
+    user = """$INSTALL_USER""".strip()
+    home = """$INSTALL_HOME""".strip() or __import__("os").path.expanduser("~")
+    if user:
+        conf["username"] = user
+    if home:
+        conf["home_dir"] = f"{home}/.config/alltool"
+        conf["bin_dir"] = f"{home}/.config/alltool/bin"
+        conf["cache_dir"] = f"{home}/.config/alltool/cache"
+        conf["logs_dir"] = f"{home}/.config/alltool/logs"
+    # A fresh install must not inherit the template's cached sudo creds.
+    if isinstance(conf.get("sudo"), dict):
+        conf["sudo"] = {"cached": False}
+    with open(conf_file, 'w') as f:
+        json.dump(conf, f, indent=2)
+    print(f"Stamped .confs.json identity: username='{conf.get('username')}' home='{home}'")
+except Exception as e:
+    print(f"Warning: could not stamp identity: {e}")
 EOF
 fi
 

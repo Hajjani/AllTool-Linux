@@ -15,6 +15,7 @@ Optimization vs old version:
 """
 import ctypes
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -23,11 +24,70 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .version import (
+    FALLBACK_VERSION,
+    REPO_ROOT as _REPO_ROOT,
+    user_conf_path,
+    get_config as get_global_config,
+    get_version as get_global_version,
+)
+
+__all__ = [
+    "HOME_DIR",
+    "BIN_DIR",
+    "LIB_DIR",
+    "resolve_home_dir",
+    "ensure_user_identity",
+    "load_config",
+    "save_config",
+    "load_help",
+    "get_installed_files",
+    "get_version",
+    "get_config",
+    "AllToolSHM",
+    "AllToolCompiler",
+    "AllToolSudo",
+]
+
+
+def get_version() -> str:
+    """Global accessor — version from `.confs.json` (see Tools/version.py)."""
+    return get_global_version()
+
+
+def get_config() -> Dict[str, Any]:
+    """Global accessor — full `.confs.json` dict (see Tools/version.py)."""
+    return get_global_config()
+
 HOME_DIR = Path.home() / ".config" / "alltool"
 BIN_DIR = HOME_DIR / "bin"
 LIB_DIR = BIN_DIR
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = _REPO_ROOT
+
+
+def resolve_home_dir(config: Optional[Dict[str, Any]] = None) -> Path:
+    """Acting home from `.confs.json` (`home_dir`), not the static default.
+
+    Falls back to the current user's `~/.config/alltool` when unset.
+    """
+    try:
+        cfg = config if config is not None else load_config()
+        raw = (cfg.get("home_dir") or "").strip() if isinstance(cfg, dict) else ""
+        if raw.startswith("~"):
+            return Path.home() / raw[2:] if raw.startswith("~/") else Path.home() / raw[1:]
+        if raw:
+            return Path(os.path.expandvars(os.path.expanduser(raw)))
+    except Exception:
+        pass
+    return Path.home() / ".config" / "alltool"
+
+
+def ensure_user_identity(**kwargs) -> tuple:
+    """Lazy wrapper around Tools.identity.ensure_user_identity (no cycle)."""
+    from . import identity as _ident
+
+    return _ident.ensure_user_identity(**kwargs)
 
 _shm_lib = None
 _compiler_lib = None
@@ -452,7 +512,11 @@ class AllToolSudo:
 
 
 _DEFAULT_CONFIG: Dict[str, Any] = {
-    "version": "2.0.0",
+    # Single source of truth is `.confs.json`; this is only the
+    # no-config-file fallback (see Tools/version.py).
+    "version": FALLBACK_VERSION,
+    "username": "",
+    "home_dir": str(HOME_DIR),
     "bin_dir": str(HOME_DIR / "bin"),
     "cache_dir": str(HOME_DIR / "cache"),
     "logs_dir": str(HOME_DIR / "logs"),
@@ -476,7 +540,7 @@ def load_config() -> Dict[str, Any]:
     global _config_cache
     if _config_cache is not None:
         return dict(_config_cache)
-    data = _load_json_first_hit([HOME_DIR / ".confs.json", REPO_ROOT / ".confs.json"])
+    data = _load_json_first_hit([user_conf_path(), REPO_ROOT / ".confs.json"])
     if data is None:
         data = dict(_DEFAULT_CONFIG)
     _config_cache = data
@@ -486,7 +550,7 @@ def load_config() -> Dict[str, Any]:
 def save_config(config: Dict[str, Any]):
     global _config_cache
     _config_cache = dict(config)
-    config_path = HOME_DIR / ".confs.json"
+    config_path = user_conf_path()
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with open(config_path, "w") as f:

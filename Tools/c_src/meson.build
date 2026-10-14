@@ -1,5 +1,12 @@
+# Canonical version lives in `.confs.json` at the repo root.
+# Single source of truth: bump `.confs.json` only.
+_confs = meson.project_source_root() / '..' / '..' / '.confs.json'
+_ver = run_command('python3', '-c',
+  'import json,sys; print(json.load(open(sys.argv[1]))["version"])',
+  _confs, check: true).stdout().strip()
+
 project('alltool-c', 'c',
-  version: '2.0.0',
+  version: _ver,
   default_options: ['warning_level=3', 'werror=false', 'c_std=c11'])
 
 prefix = get_option('prefix')
@@ -42,7 +49,7 @@ pkg = import('pkgconfig')
 pkg.generate(
   name: 'alltool',
   description: 'AllTool C Components',
-  version: '2.0.0',
+  version: _ver,
   libraries: [alltool_shm_lib, alltool_compiler_lib, alltool_sudo_lib],
   requires: ['openssl', 'libcjson']
 )

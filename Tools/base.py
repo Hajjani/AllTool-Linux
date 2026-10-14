@@ -3,19 +3,63 @@ import os
 import sys
 from typing import List, Optional, Callable
 from pathlib import Path
-from .bindings import load_config, AllToolSudo, HOME_DIR
+from .bindings import (
+    load_config,
+    AllToolSudo,
+    HOME_DIR,
+    resolve_home_dir,
+    get_version as _global_version,
+)
 
 class ToolBase:
     def __init__(self):
         self._config = None
         self._sudo = None
-        self.home_dir = HOME_DIR
+        self._home_dir = None
+
+    @property
+    def home_dir(self) -> Path:
+        # Acting folder comes from `.confs.json`, not the static default.
+        if self._home_dir is None:
+            try:
+                self._home_dir = resolve_home_dir(self.config)
+            except Exception:
+                self._home_dir = HOME_DIR
+        return self._home_dir
+
+    @home_dir.setter
+    def home_dir(self, value) -> None:
+        self._home_dir = Path(value) if value is not None else None
+
+    @property
+    def username(self) -> str:
+        """Owner identity from `.confs.json` (falls back to OS login)."""
+        try:
+            stored = str(self.config.get("username", "") or "").strip()
+            if stored:
+                return stored
+        except (AttributeError, TypeError):
+            pass
+        try:
+            from .identity import current_username
+
+            return current_username()
+        except Exception:
+            return ""
 
     @property
     def config(self):
         if self._config is None:
             self._config = load_config()
         return self._config
+
+    @property
+    def version(self) -> str:
+        """Global version from `.confs.json` (same for every tool)."""
+        try:
+            return str(self.config.get("version", _global_version()))
+        except (AttributeError, TypeError):
+            return _global_version()
 
     @property
     def sudo(self):

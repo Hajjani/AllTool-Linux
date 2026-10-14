@@ -1,5 +1,6 @@
 {
   "version": "3.2.0",
+  "username": "",
   "home_dir": "~/.config/alltool",
   "bin_dir": "~/.config/alltool/bin",
   "cache_dir": "~/.config/alltool/cache",

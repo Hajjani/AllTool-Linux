@@ -13,76 +13,16 @@ RUNTIME_CMDS = {
     ".jar": "java",
 }
 
-RUNTIME_INSTALL_HINTS = {
-    "debian": {
-        "python3": "sudo apt install python3",
-        "bash": "sudo apt install bash",
-        "node": "sudo apt install nodejs",
-        "perl": "sudo apt install perl",
-        "ruby": "sudo apt install ruby",
-        "php": "sudo apt install php",
-        "java": "sudo apt install default-jre",
-    },
-    "ubuntu": {
-        "python3": "sudo apt install python3",
-        "bash": "sudo apt install bash",
-        "node": "sudo apt install nodejs",
-        "perl": "sudo apt install perl",
-        "ruby": "sudo apt install ruby",
-        "php": "sudo apt install php",
-        "java": "sudo apt install default-jre",
-    },
-    "arch": {
-        "python3": "sudo pacman -S python",
-        "bash": "sudo pacman -S bash",
-        "node": "sudo pacman -S nodejs",
-        "perl": "sudo pacman -S perl",
-        "ruby": "sudo pacman -S ruby",
-        "php": "sudo pacman -S php",
-        "java": "sudo pacman -S jre-openjdk",
-    },
-    "fedora": {
-        "python3": "sudo dnf install python3",
-        "bash": "sudo dnf install bash",
-        "node": "sudo dnf install nodejs",
-        "perl": "sudo dnf install perl",
-        "ruby": "sudo dnf install ruby",
-        "php": "sudo dnf install php",
-        "java": "sudo dnf install java-latest-openjdk",
-    },
-    "opensuse": {
-        "python3": "sudo zypper install python3",
-        "bash": "sudo zypper install bash",
-        "node": "sudo zypper install nodejs",
-        "perl": "sudo zypper install perl",
-        "ruby": "sudo zypper install ruby",
-        "php": "sudo zypper install php",
-        "java": "sudo zypper install java-latest-openjdk",
-    },
-}
-
-def _get_distro():
-    if os.path.exists("/etc/os-release"):
-        with open("/etc/os-release") as f:
-            for line in f:
-                if line.startswith("ID="):
-                    return line.strip().split("=")[1].strip('"')
-    return "unknown"
+# Install hints live in Tools/deps.py (single source); _check_runtime below
+# routes missing runtimes through deps.ensure_command (hint + ask to install).
 
 def _check_runtime(tool, ext):
     cmd = RUNTIME_CMDS.get(ext)
     if not cmd:
         return True
-    if not tool.has_command(cmd):
-        tool.print_error(f"{cmd} is not installed (required for {ext} files).")
-        distro = _get_distro()
-        hints = RUNTIME_INSTALL_HINTS.get(distro, {})
-        if cmd in hints:
-            print(f"   Install with: {hints[cmd]}")
-        else:
-            print(f"   Install {cmd} using your package manager.")
-        return False
-    return True
+    from .deps import ensure_command
+    # Prints the install hint and offers to install when missing.
+    return ensure_command(tool, cmd, f"{ext} files")
 
 @command("run", aliases=["exec"], help_text="Auto-detect and run scripts. Compiles C/C++ with caching.")
 def run_script(args: list):

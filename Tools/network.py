@@ -1,14 +1,9 @@
 from .base import command, ToolBase
+from .deps import ensure_command
 import subprocess
 
 def _check_speedtest(tool):
-    if not tool.has_command("speedtest-cli"):
-        tool.print_error("speedtest-cli is not installed.")
-        print("   Install with: sudo apt install speedtest-cli  (Debian/Ubuntu)")
-        print("               sudo pacman -S speedtest-cli  (Arch)")
-        print("               sudo dnf install speedtest-cli  (Fedora)")
-        return False
-    return True
+    return ensure_command(tool, "speedtest-cli", "netspeed command")
 
 @command("netspeed", help_text="Measure network speed")
 def netspeed(args: list):

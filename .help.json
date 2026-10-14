@@ -56,15 +56,21 @@
       }
     },
     "sound": {
-      "description": "Play audio file or playlist (wav, mp3, ogg, flac, aac, m4a)",
-      "usage": "alltool sound <file|playlist.txt>",
+      "description": "Play audio, control playback (st/pl/rp) and volume (N%)",
+      "usage": "alltool sound <file|playlist.txt|st|pl|rp [on|off]|N%>",
       "aliases": [],
-      "examples": ["alltool sound song.mp3", "alltool sound playlist.txt"],
+      "examples": ["alltool sound song.mp3", "alltool sound playlist.txt", "alltool sound st", "alltool sound pl", "alltool sound rp", "alltool sound 23%"],
       "options": {
         "formats": [".wav", ".mp3", ".ogg", ".flac", ".aac", ".m4a"]
       },
+      "subcommands": {
+        "st": "Stop the current song (resume with 'pl')",
+        "pl": "Play / resume the current song",
+        "rp": "Repeat the current song: 'rp' toggles, 'rp on'/'rp off' set it",
+        "N%": "Set volume, e.g. 'alltool sound 23%' (0%-150%)"
+      },
       "lang": {
-        "en": "Play audio file or playlist",
+        "en": "Play audio, control playback (st/pl/rp) and volume (N%)",
         "fr": "Jouer un fichier audio ou une playlist",
         "ar": "تشغيل ملف صوتي أو قائمة تشغيل",
         "de": "Audio oder Playlist abspielen"

@@ -22,15 +22,41 @@ curl -fsSL https://raw.githubusercontent.com/Hajjani/AllTool-Linux/refs/heads/St
 | Command | Does what |
 |---|---|
 | `create` | Create a file (and parent folders) |
-| `format` | Format a disk (ntfs, ext4, vfat) |
+| `format` (`fmt`) | Format a disk (ntfs, ext4, vfat) |
 | `refresh` | Refresh setup, permissions, PATH |
-| `help` / `search` | Show help (en, fr, ar, de) and spceified search |
-| `sound` / `video` | Play audio / video |
-| `netspeed` / `sif` / `sf` / `up` | Net speed, system info, list files, check updates |
-| `power` | Power profiles + shutdown/reboot/sleep/lock |
-| `run` | Auto-detect and run scripts (py, sh, js, rb, php, java, c/c++, …) |
-| `psg` / `hs` | Generate passwords / hash files |
-| `sr` / `wea` | Web search / weather |
-| `pr` | Pomodoro timer |
-| `upa` / `un` | Update / uninstall AllTool |
-| `requirement` / `cl` | Check dependencies / clear terminal |
+| `help` | Show help (en, fr, ar, de) |
+| `sound` | Play audio + control playback (see below) |
+| `video` | Play video |
+| `netspeed` | Measure network speed |
+| `sif` (`sysinfo`) | Detailed system info |
+| `sf` (`ls`) | List files |
+| `up` (`update-check`) | Check for system updates |
+| `power` (`pwr`) | Power profiles + shutdown/reboot/sleep/lock |
+| `run` (`exec`) | Auto-detect and run scripts (py, sh, js, rb, php, java, c/c++, …) |
+| `psg` (`passgen`) / `hs` (`hash`) | Generate passwords / hash files |
+| `sr` (`search`) / `wea` (`weather`) | Web search / weather |
+| `pr` (`pomodoro`) | Pomodoro timer |
+| `upa` (`update`) / `un` (`uninstall`) | Update / uninstall AllTool |
+| `requirement` (`req`) / `cl` (`clear`) | Check dependencies / clear terminal |
+| `version` (`-v`, `--version`) | Show version (from `.confs.json`) |
+
+## Sound playback control
+
+`sound` plays through a background player (mpv), so playback can be
+controlled any time from the terminal:
+
+```sh
+alltool sound song.mp3   # play now (or playlist.txt to queue songs)
+alltool sound st         # stop the current song (resume with pl)
+alltool sound pl         # play / resume the current song
+alltool sound rp         # repeat on/off (toggle); 'rp on' / 'rp off' to set it
+alltool sound 23%        # set volume (0%-150%)
+```
+
+## Notes
+
+- Missing external tools (`mpv`, `ffmpeg`, `inxi`, …) print the install
+  command for your distro (Debian/Arch/Fedora/openSUSE) and offer to
+  install them on the spot.
+- The installer lets you pick optional packages by number
+  (`> 1,2,5`, ranges like `1-3`, `all`, or `none`).

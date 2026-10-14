@@ -20,61 +20,16 @@ BACKEND_CMDS = {
     "sysfs": None,  # Uses sysfs directly
 }
 
-BACKEND_INSTALL_HINTS = {
-    "debian": {
-        "powerprofilesctl": "sudo apt install power-profiles-daemon",
-        "tlp": "sudo apt install tlp",
-        "auto-cpufreq": "sudo apt install auto-cpufreq",
-        "cpupower": "sudo apt install linux-tools-common linux-tools-generic",
-    },
-    "ubuntu": {
-        "powerprofilesctl": "sudo apt install power-profiles-daemon",
-        "tlp": "sudo apt install tlp",
-        "auto-cpufreq": "sudo apt install auto-cpufreq",
-        "cpupower": "sudo apt install linux-tools-common linux-tools-generic",
-    },
-    "arch": {
-        "powerprofilesctl": "sudo pacman -S power-profiles-daemon",
-        "tlp": "sudo pacman -S tlp",
-        "auto-cpufreq": "sudo pacman -S auto-cpufreq",
-        "cpupower": "sudo pacman -S cpupower",
-    },
-    "fedora": {
-        "powerprofilesctl": "sudo dnf install power-profiles-daemon",
-        "tlp": "sudo dnf install tlp",
-        "auto-cpufreq": "pip install auto-cpufreq",
-        "cpupower": "sudo dnf install cpupower",
-    },
-    "opensuse": {
-        "powerprofilesctl": "sudo zypper install power-profiles-daemon",
-        "tlp": "sudo zypper install tlp",
-        "auto-cpufreq": "pip install auto-cpufreq",
-        "cpupower": "sudo zypper install cpupower",
-    },
-}
-
-def _get_distro():
-    if os.path.exists("/etc/os-release"):
-        with open("/etc/os-release") as f:
-            for line in f:
-                if line.startswith("ID="):
-                    return line.strip().split("=")[1].strip('"')
-    return "unknown"
+# Install hints live in Tools/deps.py (single source); _check_backend below
+# routes missing backends through deps.ensure_command (hint + ask to install).
 
 def _check_backend(tool, backend):
     cmd = BACKEND_CMDS.get(backend)
     if cmd is None:
         return True  # sysfs doesn't need a command
-    if not tool.has_command(cmd):
-        tool.print_error(f"{cmd} is not installed (required for {backend} backend).")
-        distro = _get_distro()
-        hints = BACKEND_INSTALL_HINTS.get(distro, {})
-        if cmd in hints:
-            print(f"   Install with: {hints[cmd]}")
-        else:
-            print(f"   Install {cmd} using your package manager.")
-        return False
-    return True
+    from .deps import ensure_command
+    # ensure_command prints the install hint and offers to install.
+    return ensure_command(tool, cmd, f"{backend} backend")
 
 def _get_power_config():
     config_path = Path.home() / ".config" / "alltool" / ".confs.json"

@@ -57,13 +57,8 @@ def show_files(args: list):
     return 0
 
 def _check_inxi(tool):
-    if not tool.has_command("inxi"):
-        tool.print_error("inxi is not installed.")
-        print("   Install with: sudo apt install inxi  (Debian/Ubuntu)")
-        print("               sudo pacman -S inxi  (Arch)")
-        print("               sudo dnf install inxi  (Fedora)")
-        return False
-    return True
+    from .deps import ensure_command
+    return ensure_command(tool, "inxi", "sif command")
 
 @command("sif", aliases=["sysinfo"], help_text="Show detailed system information")
 def system_info(args: list):

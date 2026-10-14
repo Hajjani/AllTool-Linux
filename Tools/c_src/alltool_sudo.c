@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "alltool_sudo.h"
+#include "alltool_version.h"
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
@@ -570,9 +571,11 @@ int alltool_sudo_cache_credentials(const char *config_path, const char *username
             return -1;
         }
     } else {
+        // Fresh config: version fallback mirrors `.confs.json`
+        // (see alltool_version.h; meson.build reads `.confs.json` directly).
         int n = snprintf(new_json, need,
-            "{\"version\":\"2.0.0\",\"sudo\":{\"cached\":true,\"username\":\"%s\",\"encrypted_password\":\"%s\",\"salt\":\"%s\"}}",
-            username, encrypted, salt);
+            "{\"version\":\"%s\",\"sudo\":{\"cached\":true,\"username\":\"%s\",\"encrypted_password\":\"%s\",\"salt\":\"%s\"}}",
+            ALLTOOL_VERSION, username, encrypted, salt);
         if (n < 0 || (size_t)n >= need) {
             free(new_json); free(json_str); free(salt); free(encrypted);
             return -1;

@@ -46,6 +46,9 @@ install-config:
 	install -m 644 Tools/c_src/alltool_shm.h $(HOME_CONFIG)/ 2>/dev/null || true
 	install -m 644 .confs.json $(HOME_CONFIG)/.confs.json 2>/dev/null || true
 	install -m 644 .help.json $(HOME_CONFIG)/.help.json 2>/dev/null || true
+	@echo "Stamping owner identity into $(HOME_CONFIG)/.confs.json..."
+	@HOME="$(HOME)" python3 -c "from Tools.identity import ensure_user_identity as _e; _c,_u=_e(auto_fix=True,ask=False); print('Stamped identity:', _c.get('username'))" 2>/dev/null || \
+	echo "⚠️  Identity stamping skipped (will self-heal on first run)."
 
 install: install-c install-python install-config
 	@echo ""
@@ -86,6 +89,9 @@ dev-install: build-c
 	install -m 755 Tools/c_src/alltool_runner $(HOME_BIN)/
 	install -m 644 .confs.json $(HOME_CONFIG)/.confs.json 2>/dev/null || true
 	install -m 644 .help.json $(HOME_CONFIG)/.help.json 2>/dev/null || true
+	@echo "Stamping owner identity into $(HOME_CONFIG)/.confs.json..."
+	@HOME="$(HOME)" python3 -c "from Tools.identity import ensure_user_identity as _e; _c,_u=_e(auto_fix=True,ask=False); print('Stamped identity:', _c.get('username'))" 2>/dev/null || \
+	echo "⚠️  Identity stamping skipped (will self-heal on first run)."
 	pip3 install -e . --break-system-packages 2>/dev/null || pip3 install -e .
 	@echo "Run 'alltool refresh' to update PATH"
 
