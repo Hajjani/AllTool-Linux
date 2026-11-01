@@ -210,6 +210,56 @@ select_optional_packages() {
 }
 
 # Install system packages: core automatically, optional by user choice.
+# Install the given packages with the detected distro's package manager.
+install_with_pkgmgr() {
+    [ $# -eq 0 ] && return 0
+    case "$DISTRO" in
+        debian)
+            sudo apt install -y "$@"
+            ;;
+        arch)
+            sudo pacman -S --noconfirm "$@"
+            ;;
+        fedora)
+            sudo dnf install -y "$@"
+            ;;
+        opensuse)
+            sudo zypper install -y "$@"
+            ;;
+    esac
+}
+
+# Map an external command to the package that provides it for this distro.
+pkg_for_command() {
+    case "$1" in
+        mpv)              echo "mpv" ;;
+        ffmpeg)           echo "ffmpeg" ;;
+        speedtest-cli)    echo "speedtest-cli" ;;
+        inxi)             echo "inxi" ;;
+        powerprofilesctl) echo "power-profiles-daemon" ;;
+        node)             echo "nodejs" ;;
+        ruby)             echo "ruby" ;;
+        php)              echo "php" ;;
+        java)
+            case "$DISTRO" in
+                debian)           echo "default-jre" ;;
+                arch)             echo "jre-openjdk" ;;
+                fedora|opensuse)  echo "java-latest-openjdk" ;;
+                *)                echo "java" ;;
+            esac
+            ;;
+        g++)
+            case "$DISTRO" in
+                debian)           echo "g++" ;;
+                arch)             echo "gcc" ;;
+                fedora|opensuse)  echo "gcc-c++" ;;
+                *)                echo "g++" ;;
+            esac
+            ;;
+        *) echo "$1" ;;
+    esac
+}
+
 install_packages() {
     local entry pkg desc
     local selected=()
@@ -223,20 +273,9 @@ install_packages() {
     echo ""
     echo "📥 Installing required packages: ${CORE_PKGS[*]}"
     case "$DISTRO" in
-        debian)
-            sudo apt update
-            sudo apt install -y "${CORE_PKGS[@]}"
-            ;;
-        arch)
-            sudo pacman -S --noconfirm "${CORE_PKGS[@]}"
-            ;;
-        fedora)
-            sudo dnf install -y "${CORE_PKGS[@]}"
-            ;;
-        opensuse)
-            sudo zypper install -y "${CORE_PKGS[@]}"
-            ;;
+        debian) sudo apt update ;;
     esac
+    install_with_pkgmgr "${CORE_PKGS[@]}"
 
     # 2. Optional — numbered multi-select ("1,2,5" / "all" / "none")
     select_optional_packages selected
@@ -249,20 +288,7 @@ install_packages() {
     fi
     echo ""
     echo "📥 Installing selected optional packages: ${selected[*]}"
-    case "$DISTRO" in
-        debian)
-            sudo apt install -y "${selected[@]}"
-            ;;
-        arch)
-            sudo pacman -S --noconfirm "${selected[@]}"
-            ;;
-        fedora)
-            sudo dnf install -y "${selected[@]}"
-            ;;
-        opensuse)
-            sudo zypper install -y "${selected[@]}"
-            ;;
-    esac
+    install_with_pkgmgr "${selected[@]}"
 }
 
 install_packages
@@ -289,6 +315,35 @@ if [ ${#MISSING_CMDS[@]} -gt 0 ]; then
     printf '  %s\n' "${MISSING_CMDS[@]}"
     echo "Some AllTool features will not work without them."
     echo "Run 'alltool requirement' to see what each command needs."
+
+    # Offer to install them on the spot, reusing the numbered picker above.
+    # -y installs everything, --no-optional / non-TTY skips (same policy as
+    # the optional-package stage).
+    if [[ "$INSTALL_ALL_OPTIONAL" != "true" ]] && { [[ "$SKIP_OPTIONAL" == "true" ]] || [[ ! -t 0 ]]; }; then
+        echo "ℹ️  Skipping on-the-spot install of missing commands (non-interactive or --no-optional)."
+    else
+        echo ""
+        echo "🧩 Missing commands — install now? (pick by number, 'all', or 'none')"
+        local_saved_optional=("${OPTIONAL_PKGS[@]}")
+        entries=()
+        for cmd in "${MISSING_CMDS[@]}"; do
+            _pkg="$(pkg_for_command "$cmd")"
+            entries+=("$_pkg|required by command: $cmd")
+        done
+        OPTIONAL_PKGS=("${entries[@]}")
+        missing_selected=()
+        select_optional_packages missing_selected
+        OPTIONAL_PKGS=("${local_saved_optional[@]}")
+
+        if [ ${#missing_selected[@]} -gt 0 ]; then
+            echo ""
+            echo "📥 Installing missing commands now: ${missing_selected[*]}"
+            install_with_pkgmgr "${missing_selected[@]}"
+        else
+            echo "ℹ️  None chosen — missing commands were not installed."
+            echo "   Run 'alltool requirement' to see what each command needs."
+        fi
+    fi
 fi
 
 # Detect power management system
@@ -367,8 +422,14 @@ try:
         conf["cache_dir"] = f"{home}/.config/alltool/cache"
         conf["logs_dir"] = f"{home}/.config/alltool/logs"
     # A fresh install must not inherit the template's cached sudo creds.
-    if isinstance(conf.get("sudo"), dict):
-        conf["sudo"] = {"cached": False}
+    # Cached sudo credentials live only in `.confs.json` (single source of
+    # truth); write the full v2-shaped record, empty and uncached.
+    if isinstance(conf.get("sudo"), dict) or conf.get("sudo") is None:
+        conf["sudo"] = {
+            "cached": False, "scheme": "", "username": "", "iterations": 0,
+            "salt": "", "nonce": "", "record_key": "",
+            "encrypted_password": "", "auth_tag": "",
+        }
     with open(conf_file, 'w') as f:
         json.dump(conf, f, indent=2)
     print(f"Stamped .confs.json identity: username='{conf.get('username')}' home='{home}'")
@@ -381,6 +442,44 @@ fi
 # which is where the app loads them from — NOT /usr/local like `make install`)
 echo "🔨 Running make install-user..."
 make install-user
+
+# Cached sudo credentials live in ~/.config/alltool/.confs.json (single
+# source of truth). This install must: keep a record that already belongs
+# to this user (reinstall/upgrade), clear one owned by someone else
+# (username-change resilience), and keep the v2 schema complete so the C
+# side can parse it without falling back.
+USER_CONFIG="$HOME/.config/alltool/.confs.json"
+if [ -f "$USER_CONFIG" ]; then
+    INSTALL_USER="$(whoami 2>/dev/null || id -un 2>/dev/null || echo "")"
+    python3 << EOF || true
+import json
+user_config = "$USER_CONFIG"
+me = """$INSTALL_USER""".strip()
+try:
+    with open(user_config) as f:
+        conf = json.load(f)
+except Exception as e:
+    raise SystemExit(f"Warning: could not read user config: {e}")
+sudo = conf.get("sudo")
+if not isinstance(sudo, dict):
+    sudo = conf["sudo"] = {}
+
+# complete v2 schema
+for key in ("cached", "scheme", "username", "iterations", "salt",
+            "nonce", "record_key", "encrypted_password", "auth_tag"):
+    sudo.setdefault(key, False if key == "cached" else (0 if key == "iterations" else ""))
+
+if sudo == {"cached": False} or all(not str(sudo[k]) for k in ("salt", "record_key")):
+    pass  # nothing cached — fresh record, nothing to do
+elif me and str(sudo.get("username", "")) not in ("", me):
+    sudo["cached"] = False
+    print(f"Cleared cached sudo credentials owned by '{sudo.get('username')}' (this install runs as '{me}').")
+
+with open(user_config, "w") as f:
+    json.dump(conf, f, indent=2)
+print("Sudo record in .confs.json OK (cached=%s)." % json.dumps(sudo.get("cached")))
+EOF
+fi
 
 # Set up the tool in ~/bin
 echo "⚙️  Setting up AllTool in ~/bin..."

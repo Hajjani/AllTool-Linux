@@ -44,7 +44,9 @@ install-config:
 	@echo "Creating user config directory at $(HOME_CONFIG)..."
 	install -d $(HOME_BIN) $(HOME_CACHE) $(HOME_LOGS)
 	install -m 644 Tools/c_src/alltool_shm.h $(HOME_CONFIG)/ 2>/dev/null || true
-	install -m 644 .confs.json $(HOME_CONFIG)/.confs.json 2>/dev/null || true
+	# `.confs.json` is the single source of truth: never clobber an existing
+	# user config (identity + cached sudo record survive reinstalls).
+	[ -f $(HOME_CONFIG)/.confs.json ] || install -m 644 .confs.json $(HOME_CONFIG)/.confs.json
 	install -m 644 .help.json $(HOME_CONFIG)/.help.json 2>/dev/null || true
 	@echo "Stamping owner identity into $(HOME_CONFIG)/.confs.json..."
 	@HOME="$(HOME)" python3 -c "from Tools.identity import ensure_user_identity as _e; _c,_u=_e(auto_fix=True,ask=False); print('Stamped identity:', _c.get('username'))" 2>/dev/null || \
