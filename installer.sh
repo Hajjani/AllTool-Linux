@@ -27,26 +27,6 @@ detect_distro() {
 
 DISTRO=$(detect_distro)
 echo "📦 Detected distro: $DISTRO"
-INSTALL_ALL_OPTIONAL=false
-SKIP_OPTIONAL=false
-for arg in "$@"; do
-    case "$arg" in
-        -y|--yes) INSTALL_ALL_OPTIONAL=true ;;
-        --no-optional|--minimal) SKIP_OPTIONAL=true ;;
-        -h|--help)
-            echo "Usage: $0 [-y|--yes] [--no-optional|--minimal]"
-            echo ""
-            echo "  -y, --yes          install all optional packages without asking"
-            echo "  --no-optional      skip all optional packages without asking"
-            echo "  --minimal          alias of --no-optional"
-            echo ""
-            echo "  Without flags you pick optional packages by number:"
-            echo "    1. mpv    2. ffmpeg  ..."
-            echo "    > 1,2,5   (or a range like 1-3, 'all', 'none')"
-            exit 0
-            ;;
-    esac
-done
 
 case "$DISTRO" in
     debian)
@@ -115,27 +95,16 @@ case "$DISTRO" in
         ;;
 esac
 
-# Optional packages picker. Appends the chosen package names to the
-# array named by $1 (pass the array *name*, e.g. select_optional_packages selected).
-# Users answer with numbers separated by commas: "1,2,5" / ranges "1-3" /
-# "all" / "none". Honors -y/--yes (all) and --no-optional / non-TTY (none).
+# Interactive optional packages picker using /dev/tty for curl | bash support
 select_optional_packages() {
     local _out_name="$1"
     local entry pkg desc
-    if [[ "$INSTALL_ALL_OPTIONAL" == "true" ]]; then
-        echo ""
-        echo "➕ Installing all ${#OPTIONAL_PKGS[@]} optional packages (-y/--yes given)."
-        for entry in "${OPTIONAL_PKGS[@]}"; do
-            eval "${_out_name}+=(\"\${entry%%|*}\")"
-        done
-        return 0
+
+    local input_stream="/dev/stdin"
+    if [[ -e /dev/tty ]]; then
+        input_stream="/dev/tty"
     fi
-    if [[ "$SKIP_OPTIONAL" == "true" ]] || [[ ! -t 0 ]]; then
-        echo ""
-        echo "ℹ️  Skipping optional packages (non-interactive or --no-optional)."
-        echo "   Run 'alltool requirement' to see what each command needs."
-        return 0
-    fi
+
     echo ""
     echo "🧩 Optional packages — pick what to install:"
     local idx=1
@@ -148,11 +117,16 @@ select_optional_packages() {
     local total=${#OPTIONAL_PKGS[@]}
     echo ""
     echo "   Enter numbers separated by commas (e.g. 1,2,5), a range (e.g. 1-3), 'all', or 'none'."
+    
     local choice token tokens picked valid n lo hi already p
     while true; do
-        read -r -p "> " choice || choice=""
+        printf "> "
+        if ! read -r choice < "$input_stream"; then
+            choice="none"
+        fi
         choice="$(printf '%s' "$choice" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
         [ -z "$choice" ] && choice="none"
+        
         if [[ "$choice" == "all" || "$choice" == "a" ]]; then
             for entry in "${OPTIONAL_PKGS[@]}"; do
                 eval "${_out_name}+=(\"\${entry%%|*}\")"
@@ -163,6 +137,7 @@ select_optional_packages() {
         if [[ "$choice" == "none" || "$choice" == "no" || "$choice" == "n" ]]; then
             break
         fi
+        
         picked=()
         valid=true
         IFS=',' read -ra tokens <<< "$choice"
@@ -171,7 +146,6 @@ select_optional_packages() {
                 lo=$token; hi=$token
             elif [[ "$token" =~ ^([0-9]+)-([0-9]+)$ ]]; then
                 lo=${BASH_REMATCH[1]}; hi=${BASH_REMATCH[2]}
-                # allow reversed ranges like 5-2
                 if [ "$lo" -gt "$hi" ]; then
                     n=$lo; lo=$hi; hi=$n
                 fi
@@ -179,7 +153,6 @@ select_optional_packages() {
                 valid=false
                 break
             fi
-            # strip leading zeros (avoid octal interpretation)
             lo=$((10#$lo)); hi=$((10#$hi))
             if [ "$lo" -lt 1 ] || [ "$hi" -gt "$total" ]; then
                 valid=false
@@ -197,6 +170,7 @@ select_optional_packages() {
                 n=$((n + 1))
             done
         done
+        
         if [[ "$valid" == "true" ]] && [ ${#picked[@]} -gt 0 ]; then
             for n in "${picked[@]}"; do
                 entry="${OPTIONAL_PKGS[$((n - 1))]}"
@@ -209,27 +183,17 @@ select_optional_packages() {
     done
 }
 
-# Install system packages: core automatically, optional by user choice.
-# Install the given packages with the detected distro's package manager.
+# Install packages with distro package manager
 install_with_pkgmgr() {
     [ $# -eq 0 ] && return 0
     case "$DISTRO" in
-        debian)
-            sudo apt install -y "$@"
-            ;;
-        arch)
-            sudo pacman -S --noconfirm "$@"
-            ;;
-        fedora)
-            sudo dnf install -y "$@"
-            ;;
-        opensuse)
-            sudo zypper install -y "$@"
-            ;;
+        debian) sudo apt install -y "$@" ;;
+        arch) sudo pacman -S --noconfirm "$@" ;;
+        fedora) sudo dnf install -y "$@" ;;
+        opensuse) sudo zypper install -y "$@" ;;
     esac
 }
 
-# Map an external command to the package that provides it for this distro.
 pkg_for_command() {
     case "$1" in
         mpv)              echo "mpv" ;;
@@ -261,15 +225,12 @@ pkg_for_command() {
 }
 
 install_packages() {
-    local entry pkg desc
     local selected=()
-
     if [ ${#CORE_PKGS[@]} -eq 0 ]; then
         echo "⚠️  Unknown distro, skipping system package installation"
         return 0
     fi
 
-    # 1. Core (required) — always installed
     echo ""
     echo "📥 Installing required packages: ${CORE_PKGS[*]}"
     case "$DISTRO" in
@@ -277,10 +238,8 @@ install_packages() {
     esac
     install_with_pkgmgr "${CORE_PKGS[@]}"
 
-    # 2. Optional — numbered multi-select ("1,2,5" / "all" / "none")
     select_optional_packages selected
 
-    # 3. Install what was selected
     if [ ${#selected[@]} -eq 0 ]; then
         echo "ℹ️  No optional packages selected — skipping."
         echo "   You can install them later manually; run 'alltool requirement' to see what each command needs."
@@ -293,7 +252,6 @@ install_packages() {
 
 install_packages
 
-
 # Create temp directory
 TMPDIR=$(mktemp -d)
 REPO_PATH="$TMPDIR/AllTool-Linux"
@@ -301,7 +259,7 @@ echo "📂 Cloning repo to $REPO_PATH..."
 git clone "$REPO_URL" "$REPO_PATH"
 cd "$REPO_PATH"
 
-# Check external commands (warn only — these are all optional now)
+# Check external commands
 echo "🔍 Checking external commands..."
 MISSING_CMDS=()
 for cmd in mpv ffmpeg speedtest-cli inxi powerprofilesctl node ruby php java g++; do
@@ -326,31 +284,26 @@ if [ ${#MISSING_CMDS[@]} -gt 0 ]; then
     echo "Some AllTool features will not work without them."
     echo "Run 'alltool requirement' to see what each command needs."
 
-    # Offer to install them on the spot.
-    if [[ "$INSTALL_ALL_OPTIONAL" != "true" ]] && { [[ "$SKIP_OPTIONAL" == "true" ]] || [[ ! -t 0 ]]; }; then
-        echo "ℹ️  Skipping on-the-spot install of missing commands (non-interactive or --no-optional)."
-    else
-        echo ""
-        echo "🧩 Missing commands — install now? (pick by number, 'all', or 'none')"
-        local_saved_optional=("${OPTIONAL_PKGS[@]}")
-        entries=()
-        for cmd in "${MISSING_CMDS[@]}"; do
-            _pkg="$(pkg_for_command "$cmd")"
-            entries+=("$_pkg|required by command: $cmd")
-        done
-        OPTIONAL_PKGS=("${entries[@]}")
-        missing_selected=()
-        select_optional_packages missing_selected
-        OPTIONAL_PKGS=("${local_saved_optional[@]}")
+    echo ""
+    echo "🧩 Missing commands — install now?"
+    local_saved_optional=("${OPTIONAL_PKGS[@]}")
+    entries=()
+    for cmd in "${MISSING_CMDS[@]}"; do
+        _pkg="$(pkg_for_command "$cmd")"
+        entries+=("$_pkg|required by command: $cmd")
+    done
+    OPTIONAL_PKGS=("${entries[@]}")
+    missing_selected=()
+    select_optional_packages missing_selected
+    OPTIONAL_PKGS=("${local_saved_optional[@]}")
 
-        if [ ${#missing_selected[@]} -gt 0 ]; then
-            echo ""
-            echo "📥 Installing missing commands now: ${missing_selected[*]}"
-            install_with_pkgmgr "${missing_selected[@]}"
-        else
-            echo "ℹ️  None chosen — missing commands were not installed."
-            echo "   Run 'alltool requirement' to see what each command needs."
-        fi
+    if [ ${#missing_selected[@]} -gt 0 ]; then
+        echo ""
+        echo "📥 Installing missing commands now: ${missing_selected[*]}"
+        install_with_pkgmgr "${missing_selected[@]}"
+    else
+        echo "ℹ️  None chosen — missing commands were not installed."
+        echo "   Run 'alltool requirement' to see what each command needs."
     fi
 fi
 
@@ -387,7 +340,6 @@ echo "Detected power management: $POWER_MGMT"
 # Update .confs.json with power management config
 CONF_FILE="$REPO_PATH/.confs.json"
 if [ -f "$CONF_FILE" ]; then
-    # Serialize profiles as JSON via python to avoid bash @Q quoting (not valid JSON).
     PROFILES_JSON=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1:]))" "${POWER_PROFILES[@]}")
     POWER_MGMT_ESCAPED=$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$POWER_MGMT")
     python3 << EOF
@@ -408,8 +360,7 @@ print("Updated .confs.json with power management config")
 EOF
 fi
 
-# Stamp owner identity into .confs.json (username + acting folders).
-# `.confs.json` is the source the tool reads the user name from.
+# Stamp owner identity into .confs.json
 CONF_FILE="$REPO_PATH/.confs.json"
 if [ -f "$CONF_FILE" ]; then
     INSTALL_USER="$(whoami 2>/dev/null || id -un 2>/dev/null || echo "")"
@@ -429,9 +380,6 @@ try:
         conf["bin_dir"] = f"{home}/.config/alltool/bin"
         conf["cache_dir"] = f"{home}/.config/alltool/cache"
         conf["logs_dir"] = f"{home}/.config/alltool/logs"
-    # A fresh install must not inherit the template's cached sudo creds.
-    # Cached sudo credentials live only in .confs.json (single source of
-    # truth); write the full v2-shaped record, empty and uncached.
     if isinstance(conf.get("sudo"), dict) or conf.get("sudo") is None:
         conf["sudo"] = {
             "cached": False, "scheme": "", "username": "", "iterations": 0,
@@ -446,16 +394,10 @@ except Exception as e:
 EOF
 fi
 
-# User-space install (no root needed: libs go to ~/.config/alltool/bin,
-# which is where the app loads them from — NOT /usr/local like `make install`)
+# Run make install-user
 echo "🔨 Running make install-user..."
 make install-user
 
-# Cached sudo credentials live in ~/.config/alltool/.confs.json (single
-# source of truth). This install must: keep a record that already belongs
-# to this user (reinstall/upgrade), clear one owned by someone else
-# (username-change resilience), and keep the v2 schema complete so the C
-# side can parse it without falling back.
 USER_CONFIG="$HOME/.config/alltool/.confs.json"
 if [ -f "$USER_CONFIG" ]; then
     INSTALL_USER="$(whoami 2>/dev/null || id -un 2>/dev/null || echo "")"
@@ -472,13 +414,12 @@ sudo = conf.get("sudo")
 if not isinstance(sudo, dict):
     sudo = conf["sudo"] = {}
 
-# complete v2 schema
 for key in ("cached", "scheme", "username", "iterations", "salt",
             "nonce", "record_key", "encrypted_password", "auth_tag"):
     sudo.setdefault(key, False if key == "cached" else (0 if key == "iterations" else ""))
 
 if sudo == {"cached": False} or all(not str(sudo[k]) for k in ("salt", "record_key")):
-    pass  # nothing cached — fresh record, nothing to do
+    pass
 elif me and str(sudo.get("username", "")) not in ("", me):
     sudo["cached"] = False
     print(f"Cleared cached sudo credentials owned by '{sudo.get('username')}' (this install runs as '{me}').")
@@ -527,7 +468,6 @@ if [[ -f "$SHELL_RC" ]]; then
     fi
 fi
 
-# Clean up cloned repo
 echo "🧹 Cleaning up cloned repository..."
 rm -rf "$REPO_PATH"
 
@@ -537,11 +477,6 @@ echo "   Run 'source ~/.bashrc' or restart your terminal"
 echo "   Then use: $ENTRY_POINT <command>"
 echo "   Or run: alltool refresh"
 
-# Self-removal LAST, after the banner: only a downloaded standalone copy
-# (a real file under $HOME or /tmp) is deleted. In a `curl … | bash` run
-# `$0` is the bash binary, so resolving it must never result in a deletion,
-# and the deletion can never abort the script (set -e). It runs at the very
-# end because deleting the running script can cut short any trailing lines.
 INSTALLER_PATH="$(readlink -f "$0" 2>/dev/null || true)"
 case "$INSTALLER_PATH" in
     "$HOME"/*|/tmp/*)
