@@ -422,7 +422,7 @@ try:
         conf["cache_dir"] = f"{home}/.config/alltool/cache"
         conf["logs_dir"] = f"{home}/.config/alltool/logs"
     # A fresh install must not inherit the template's cached sudo creds.
-    # Cached sudo credentials live only in `.confs.json` (single source of
+    # Cached sudo credentials live only in .confs.json (single source of
     # truth); write the full v2-shaped record, empty and uncached.
     if isinstance(conf.get("sudo"), dict) or conf.get("sudo") is None:
         conf["sudo"] = {
@@ -523,14 +523,24 @@ fi
 echo "🧹 Cleaning up cloned repository..."
 rm -rf "$REPO_PATH"
 
-# Remove installer
-echo "🗑️  Removing installer..."
-INSTALLER_PATH="$(readlink -f "$0")"
-rm -f "$INSTALLER_PATH"
-echo "✅ Installer removed"
-
 echo ""
 echo "✨ Installation complete!"
 echo "   Run 'source ~/.bashrc' or restart your terminal"
 echo "   Then use: $ENTRY_POINT <command>"
 echo "   Or run: alltool refresh"
+
+# Self-removal LAST, after the banner: only a downloaded standalone copy
+# (a real file under $HOME or /tmp) is deleted. In a `curl … | bash` run
+# `$0` is the bash binary, so resolving it must never result in a deletion,
+# and the deletion can never abort the script (set -e). It runs at the very
+# end because deleting the running script can cut short any trailing lines.
+INSTALLER_PATH="$(readlink -f "$0" 2>/dev/null || true)"
+case "$INSTALLER_PATH" in
+    "$HOME"/*|/tmp/*)
+        rm -f "$INSTALLER_PATH" || true
+        echo "🗑️  Installer removed"
+        ;;
+    *)
+        echo "ℹ️  Skipped self-removal (not a downloaded copy)."
+        ;;
+esac
