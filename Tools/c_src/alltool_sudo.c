@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "alltool_sudo.h"
+#include "alltool_crypto.h"
 #include "alltool_version.h"
 #include <ctype.h>
 #include <errno.h>
@@ -13,17 +14,28 @@
 #include <sys/mman.h>
 #include <time.h>
 
-#define SALT_LENGTH 16
+#define SALT_LENGTH 16        /* v1 legacy salt (bytes) */
+#define SALT_LENGTH_V2 32     /* v2 PBKDF2 salt (bytes) */
+#define NONCE_LENGTH_V2 12    /* v2 ChaCha20 nonce (bytes) */
+#define TAG_LENGTH_V2 32      /* v2 HMAC-ShA256 tag (bytes) */
+#define KEY_LENGTH_V2 64      /* v2 derived key: 32 enc + 32 mac */
+#define V2_DOMAIN "alltool-sudo-v2"
+#define V2_MIN_ITERS 10000u
+#define V2_MAX_ITERS 5000000u
 
-/* Best-effort memory wiping that the compiler must not optimize away.
- * Used for all transient cleartext password buffers. */
+/* Best-effort memory wiping that the compiler must not optimize away. */
 static void secure_zero(void *ptr, size_t len) {
-    if (!ptr || len == 0) return;
-    volatile unsigned char *p = (volatile unsigned char *)ptr;
-    while (len--) *p++ = 0;
+    alltool_secure_zero(ptr, len);
 }
 
 static char *extract_json_value(char *start);
+/* Forward declarations for helpers defined later in this file. */
+static char *read_config_file(const char *config_path);
+static char *top_level_string(const char *json, const char *key);
+static int find_sudo_object(char *json, char **sudo_start, char **sudo_end);
+static char *strstr_range(char *start, char *end, const char *needle);
+static int valid_username(const char *username);
+static void clamp_iterations(unsigned int *iters);
 
 static int read_password(const char *prompt, char **password) {
     printf("%s", prompt);
@@ -52,22 +64,76 @@ static int read_password(const char *prompt, char **password) {
     return 0;
 }
 
-int alltool_sudo_prompt_credentials(const char *prompt, char **username, char **password) {
-    char *user = getenv("USER");
-    if (user) {
-        *username = strdup(user);
-    } else {
+int alltool_sudo_prompt_credentials_conf(const char *prompt, const char *config_path,
+                                         char **username, char **password) {
+    char *user = NULL;
+
+    /* Identity comes from `.confs.json` (single source of truth):
+     * the sudo record's username first, then the top-level one. */
+    if (config_path) {
+        char *json_str = read_config_file(config_path);
+        if (json_str) {
+            char *sudo_start = NULL, *sudo_end = NULL;
+            if (find_sudo_object(json_str, &sudo_start, &sudo_end) == 0 &&
+                sudo_start && sudo_end > sudo_start && sudo_end <= json_str + strlen(json_str)) {
+                /* search inside the sudo block only */
+                char *span = malloc((size_t)(sudo_end - sudo_start) + 1);
+                if (span) {
+                    memcpy(span, sudo_start, (size_t)(sudo_end - sudo_start));
+                    span[sudo_end - sudo_start] = '\0';
+                    char *u = strstr(span, "\"username\"");
+                    if (u) {
+                        user = extract_json_value(u);
+                    }
+                    /* untrusted transient copy of the identity; fine to wipe */
+                    secure_zero(span, strlen(span));
+                    free(span);
+                }
+            }
+            if (!user) {
+                user = top_level_string(json_str, "username");
+            }
+            free(json_str);
+        }
+    }
+
+    if (!user || !*user) {
+        free(user);
+        user = NULL;
+        const char *env_user = getenv("USER");
+        if (env_user && *env_user) {
+            user = strdup(env_user);
+        }
+    }
+    *username = NULL; /* set below once we know we succeed */
+
+    if (!user || !*user) {
+        /* Last resort: interactive username entry. */
         char buf[256];
         printf("Username: ");
         fflush(stdout);
-        if (!fgets(buf, sizeof(buf), stdin)) return -1;
+        if (!fgets(buf, sizeof(buf), stdin)) { free(user); return -1; }
         buf[strcspn(buf, "\n")] = '\0';
-        *username = strdup(buf);
+        if (!*buf) { free(user); return -1; }
+        user = strdup(buf);
+        if (!user) return -1;
     }
 
     char prompt_buf[512];
-    snprintf(prompt_buf, sizeof(prompt_buf), "%s [%s]: ", prompt ? prompt : "Password", *username);
-    return read_password(prompt_buf, password);
+    snprintf(prompt_buf, sizeof(prompt_buf), "%s [%s]: ", prompt ? prompt : "Password", user);
+
+    int rc = read_password(prompt_buf, password);
+    if (rc == 0) {
+        *username = user;
+    } else {
+        free(user);
+    }
+    return rc;
+}
+
+int alltool_sudo_prompt_credentials(const char *prompt, char **username, char **password) {
+    /* Legacy entry point: uses $USER only (no config available). */
+    return alltool_sudo_prompt_credentials_conf(prompt, NULL, username, password);
 }
 
 int alltool_sudo_generate_salt(char **salt) {
@@ -137,6 +203,213 @@ int alltool_sudo_decrypt_password(const char *encrypted, const char *salt, const
     }
     *decrypted = strdup(password);
     return 0;
+}
+
+/* ------------------------------------------------------------------ *
+ * v2: username-bound PBKDF2-HMAC-SHA256 + ChaCha20 + HMAC tag.
+ *
+ *   dk      = PBKDF2-HMAC-SHA256(password, salt || username, iters, 64)
+ *   ct      = ChaCha20(dk[0:32], nonce, counter=1, password)
+ *   tag     = HMAC-SHA256(dk[32:64], "alltool-sudo-v2" || username ||
+ *                                                 nonce || ct)
+ *
+ * Everything is hex-encoded in `.confs.json`. The username participates
+ * in the KDF and the tag, so a record cannot be re-used by (or re-owned
+ * for) a different user: a renamed user fails verification instead of
+ * silently unlocking someone else's password.                            */
+
+static void clamp_iterations(unsigned int *iters) {
+    if (*iters == 0) *iters = ALLTOOL_SUDO_DEFAULT_ITERS;
+    if (*iters < V2_MIN_ITERS) *iters = V2_MIN_ITERS;
+    if (*iters > V2_MAX_ITERS) *iters = V2_MAX_ITERS;
+}
+
+/* dk = PBKDF2-HMAC-SHA256(record_key, salt || username, iters, 64).
+ * The username participates in the derivation, so the stored record is
+ * cryptographically owned by the user it was cached for. */
+static int derive_v2_keys(const unsigned char record_key[32],
+                          const char *username,
+                          const unsigned char salt[SALT_LENGTH_V2],
+                          unsigned int iterations,
+                          unsigned char dk[KEY_LENGTH_V2]) {
+    size_t user_len = username ? strlen(username) : 0;
+    unsigned char *salt_user = malloc(SALT_LENGTH_V2 + user_len);
+    if (!salt_user) return -1;
+    memcpy(salt_user, salt, SALT_LENGTH_V2);
+    if (user_len) memcpy(salt_user + SALT_LENGTH_V2, username, user_len);
+
+    alltool_pbkdf2_sha256(record_key, 32,
+                          salt_user, SALT_LENGTH_V2 + user_len,
+                          iterations, dk, KEY_LENGTH_V2);
+
+    alltool_secure_zero(salt_user, SALT_LENGTH_V2 + user_len);
+    free(salt_user);
+    return 0;
+}
+
+/* tag = HMAC-SHA256(mac_key, "alltool-sudo-v2" || username || nonce || ct) */
+static int write_v2_tag(const char *username,
+                        const unsigned char nonce[NONCE_LENGTH_V2],
+                        const unsigned char *mac_key,
+                        const unsigned char *ct, size_t ct_len,
+                        unsigned char tag[TAG_LENGTH_V2]) {
+    size_t user_len = username ? strlen(username) : 0;
+    size_t dom_len = strlen(V2_DOMAIN);
+    size_t msg_len = dom_len + user_len + NONCE_LENGTH_V2 + ct_len;
+    unsigned char *msg = malloc(msg_len);
+    if (!msg) return -1;
+    size_t off = 0;
+    memcpy(msg + off, V2_DOMAIN, dom_len); off += dom_len;
+    if (user_len) memcpy(msg + off, username, user_len);
+    off += user_len;
+    memcpy(msg + off, nonce, NONCE_LENGTH_V2); off += NONCE_LENGTH_V2;
+    memcpy(msg + off, ct, ct_len);
+    alltool_hmac_sha256(mac_key, 32, msg, msg_len, tag);
+    alltool_secure_zero(msg, msg_len);
+    free(msg);
+    return 0;
+}
+
+static int read_entropy(unsigned char *buf, size_t len) {
+    /* No rand()/time() fallbacks for key material. */
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd < 0) return -1;
+    size_t off = 0;
+    while (off < len) {
+        ssize_t got = read(fd, buf + off, len - off);
+        if (got <= 0) { close(fd); return -1; }
+        off += (size_t)got;
+    }
+    close(fd);
+    return 0;
+}
+
+int alltool_sudo_encrypt_password_v2(const char *password, const char *username,
+                                     unsigned int iterations,
+                                     char **salt_out, char **nonce_out,
+                                     char **record_key_out,
+                                     char **encrypted_out, char **tag_out) {
+    if (!password || !username || !salt_out || !nonce_out ||
+        !record_key_out || !encrypted_out || !tag_out) return -1;
+    if (!valid_username(username)) return -1;
+    clamp_iterations(&iterations);
+
+    unsigned char salt[SALT_LENGTH_V2];
+    unsigned char nonce[NONCE_LENGTH_V2];
+    unsigned char record_key[32];
+    if (read_entropy(salt, sizeof(salt)) != 0 ||
+        read_entropy(nonce, sizeof(nonce)) != 0 ||
+        read_entropy(record_key, sizeof(record_key)) != 0) {
+        alltool_secure_zero(salt, sizeof(salt));
+        alltool_secure_zero(nonce, sizeof(nonce));
+        alltool_secure_zero(record_key, sizeof(record_key));
+        return -1;
+    }
+
+    int rc = -1;
+    unsigned char dk[KEY_LENGTH_V2];
+    if (derive_v2_keys(record_key, username, salt, iterations, dk) != 0) {
+        alltool_secure_zero(salt, sizeof(salt));
+        alltool_secure_zero(nonce, sizeof(nonce));
+        alltool_secure_zero(record_key, sizeof(record_key));
+        return -1;
+    }
+
+    size_t pw_len = strlen(password);
+    unsigned char tag[TAG_LENGTH_V2];
+    unsigned char *ct = malloc(pw_len ? pw_len : 1);
+    if (ct) {
+        alltool_chacha20_xor(dk, nonce, 1,
+                             (const unsigned char *)password, pw_len, ct);
+        if (write_v2_tag(username, nonce, dk + 32, ct, pw_len, tag) == 0) {
+            char *s_hex = alltool_hex_encode(salt, SALT_LENGTH_V2);
+            char *n_hex = alltool_hex_encode(nonce, NONCE_LENGTH_V2);
+            char *r_hex = alltool_hex_encode(record_key, 32);
+            char *c_hex = alltool_hex_encode(ct, pw_len);
+            char *t_hex = alltool_hex_encode(tag, TAG_LENGTH_V2);
+            if (s_hex && n_hex && r_hex && c_hex && t_hex) {
+                *salt_out = s_hex;
+                *nonce_out = n_hex;
+                *record_key_out = r_hex;
+                *encrypted_out = c_hex;
+                *tag_out = t_hex;
+                rc = 0;
+            } else {
+                free(s_hex); free(n_hex); free(r_hex); free(c_hex); free(t_hex);
+            }
+        }
+    }
+
+    alltool_secure_zero(dk, sizeof(dk));
+    alltool_secure_zero(salt, sizeof(salt));
+    alltool_secure_zero(nonce, sizeof(nonce));
+    alltool_secure_zero(record_key, sizeof(record_key));
+    alltool_secure_zero(tag, sizeof(tag));
+    if (ct) {
+        alltool_secure_zero(ct, pw_len);
+        free(ct);
+    }
+    return rc;
+}
+
+int alltool_sudo_decrypt_password_v2(const char *encrypted, const char *salt,
+                                     const char *nonce, const char *tag,
+                                     unsigned int iterations, const char *username,
+                                     const char *record_key_hex,
+                                     char **password_out) {
+    unsigned char salt_b[SALT_LENGTH_V2];
+    unsigned char nonce_b[NONCE_LENGTH_V2];
+    unsigned char tag_b[TAG_LENGTH_V2];
+    unsigned char tag_calc[TAG_LENGTH_V2];
+    unsigned char record_key[32];
+    unsigned char dk[KEY_LENGTH_V2];
+
+    if (!encrypted || !salt || !nonce || !tag || !username ||
+        !record_key_hex || !password_out) return -1;
+    if (!valid_username(username)) return -1;
+    clamp_iterations(&iterations);
+    if (strlen(record_key_hex) != 64) return -1; /* 32-byte hex keystore */
+
+    size_t pw_len = strlen(encrypted) / 2;
+    if (pw_len == 0 || pw_len > 4096) return -1; /* sudo passwords are small */
+    unsigned char *ct = malloc(pw_len);
+
+    int rc = -1;
+    *password_out = NULL;
+    if (ct &&
+        alltool_hex_decode(salt, salt_b, SALT_LENGTH_V2) == 0 &&
+        alltool_hex_decode(nonce, nonce_b, NONCE_LENGTH_V2) == 0 &&
+        alltool_hex_decode(tag, tag_b, TAG_LENGTH_V2) == 0 &&
+        alltool_hex_decode(record_key_hex, record_key, 32) == 0 &&
+        alltool_hex_decode(encrypted, ct, pw_len) == 0 &&
+        derive_v2_keys(record_key, username, salt_b, iterations, dk) == 0 &&
+        write_v2_tag(username, nonce_b, dk + 32, ct, pw_len, tag_calc) == 0 &&
+        alltool_consttime_eq(tag_b, tag_calc, TAG_LENGTH_V2)) {
+        unsigned char *pw = malloc(pw_len + 1);
+        if (pw) {
+            alltool_chacha20_xor(dk, nonce_b, 1, ct, pw_len, pw);
+            pw[pw_len] = '\0';
+            alltool_secure_zero(dk, sizeof(dk));
+            *password_out = (char *)pw;
+            rc = 0;
+        }
+    } else {
+        alltool_secure_zero(dk, sizeof(dk));
+    }
+
+    /* Wipe transient material regardless of result.
+     * `ct` is attacker-visible data, `tag_calc` never touches the disk;
+     * constant-time decode paths stay silent on failure. */
+    alltool_secure_zero(salt_b, sizeof(salt_b));
+    alltool_secure_zero(nonce_b, sizeof(nonce_b));
+    alltool_secure_zero(tag_b, sizeof(tag_b));
+    alltool_secure_zero(tag_calc, sizeof(tag_calc));
+    alltool_secure_zero(record_key, sizeof(record_key));
+    if (ct) {
+        alltool_secure_zero(ct, pw_len);
+        free(ct);
+    }
+    return rc;
 }
 
 /* Maximum argv entries produced when splitting a command line. */
@@ -294,8 +567,12 @@ done:
 }
 
 /* Fixed locations for sudo: never resolve it via PATH, which the caller
- * (or its environment) may control. */
-static const char *const SUDO_PATHS[] = { "/usr/bin/sudo", "/bin/sudo", NULL };
+ * (or its environment) may control. Overridable at compile time for
+ * testing with a stubbed sudo. */
+#ifndef ALLTOOL_SUDO_PATHS
+#define ALLTOOL_SUDO_PATHS { "/usr/bin/sudo", "/bin/sudo", NULL }
+#endif
+static const char *const SUDO_PATHS[] = ALLTOOL_SUDO_PATHS;
 
 int alltool_sudo_run_with_creds(const char *username, const char *password, const char *command, char **output) {
     if (!username || !password || !command || !output) return -1;
@@ -490,116 +767,294 @@ static int parse_cached_bool(const char *json_str) {
     return 0;
 }
 
+/* Bounded strstr: search only inside [start, end).
+ * Used to keep record-field lookups strictly inside the sudo block so a
+ * same-named top-level key can never shadow the record. */
+static char *strstr_range(char *start, char *end, const char *needle) {
+    if (!start || !needle || start >= end) return NULL;
+    size_t nlen = strlen(needle);
+    for (char *p = start; p + nlen <= end; p++) {
+        if (strncmp(p, needle, nlen) == 0) return p;
+    }
+    return NULL;
+}
+
+/* Locate the object contents of the "sudo" key inside `json`.
+ * On success *body_start points at the first '{' and *body_end at the
+ * matching '}' (inclusive). Returns 0 on success (-1 otherwise). */
+static int find_sudo_object(char *json, char **body_start, char **body_end) {
+    if (!json || !body_start || !body_end) return -1;
+    char *sudo_start = strstr(json, "\"sudo\"");
+    if (!sudo_start) return -1;
+    char *brace = strchr(sudo_start, '{');
+    if (!brace) return -1;
+    int depth = 0;
+    char *p = brace;
+    while (*p) {
+        if (*p == '{') depth++;
+        else if (*p == '}') {
+            depth--;
+            if (depth == 0) {
+                *body_start = brace;
+                *body_end = p;
+                return 0;
+            }
+        }
+        p++;
+    }
+    return -1;
+}
+
+/* Extract the string value of a *top-level* (depth-1) `key` from a JSON
+ * object. Used so identity fields come from `.confs.json` only and are
+ * never confused with same-named keys inside nested objects (e.g. the
+ * sudo record's username). Returns malloc'd string or NULL. */
+static char *top_level_string(const char *json, const char *key) {
+    if (!json || !key) return NULL;
+    size_t key_len = strlen(key);
+    int depth = 0;
+    int in_str = 0, esc = 0, val_esc = 0;
+    const char *p = json;
+    const char *str_start = NULL;
+
+    while (*p) {
+        if (in_str) {
+            if (esc) { esc = 0; p++; continue; }
+            if (*p == '\\') { esc = 1; p++; continue; }
+            if (*p == '"') {
+                in_str = 0;
+                if (depth == 1 && str_start) {
+                    const char *q = p + 1;
+                    while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r') q++;
+                    if (*q == ':') {
+                        /* key candidates are plain identifiers in our config:
+                         * compare unescaped bytes against `key`. */
+                        const char *r = str_start + 1;
+                        int ok = 1;
+                        for (size_t k = 0; k < key_len; k++) {
+                            char c = *r;
+                            if (c == '\\' && r + 1 < p) { r++; c = *r; }
+                            if (c != key[k]) { ok = 0; break; }
+                            r++;
+                        }
+                        if (ok && r == p) {
+                            /* value is the string after ':' */
+                            q++;
+                            while (*q == ' ' || *q == '\t' || *q == '\n' || *q == '\r') q++;
+                            if (*q != '"') return NULL;
+                            q++;
+                            const char *vstart = q;
+                            val_esc = 0;
+                            while (*q) {
+                                if (val_esc) { val_esc = 0; q++; continue; }
+                                if (*q == '\\') { val_esc = 1; q++; continue; }
+                                if (*q == '"') break;
+                                q++;
+                            }
+                            if (*q != '"') return NULL;
+                            size_t vlen = 0;
+                            for (const char *v = vstart; v < q; v++) {
+                                if (*v == '\\' && v + 1 < q) v++;
+                                vlen++;
+                            }
+                            char *val = malloc(vlen + 1);
+                            if (!val) return NULL;
+                            char *dst = val;
+                            for (const char *v = vstart; v < q; v++) {
+                                if (*v == '\\' && v + 1 < q) v++;
+                                *dst++ = *v;
+                            }
+                            *dst = '\0';
+                            return val;
+                        }
+                    }
+                }
+                str_start = NULL;
+                p++;
+                continue;
+            }
+            p++;
+            continue;
+        }
+        if (*p == '"') { in_str = 1; str_start = p; p++; continue; }
+        if (*p == '{' || *p == '[') { depth++; p++; continue; }
+        if (*p == '}' || *p == ']') { depth--; p++; continue; }
+        p++;
+    }
+    return NULL;
+}
+
+/* Build a new JSON document with the "sudo" block replaced/inserted.
+ * `body` is the *inner* text of the new object (without braces).
+ * Preserves the rest of the document on best-effort basis. The fresh
+ * config case echoes the version from alltool_version.h, which meson
+ * buys from `.confs.json` — one version source. */
+static char *json_with_sudo_body(const char *json_str, const char *body) {
+    size_t body_len = strlen(body);
+
+    if (json_str && strstr(json_str, "\"sudo\"")) {
+        /* offsets come from a scan of the (unchanged) text; use strdup so
+         * find_sudo_object has a non-const buffer. */
+        char *scan = strdup(json_str);
+        if (!scan) return NULL;
+        char *s = NULL, *e = NULL;
+        if (find_sudo_object(scan, &s, &e) != 0) {
+            free(scan);
+            return NULL;
+        }
+        /* the splice prefix must end *before* the "sudo" key itself,
+         * not before its opening brace (body_start). */
+        char *keyp = strstr(scan, "\"sudo\"");
+        size_t prefix_len = keyp ? (size_t)(keyp - scan) : (size_t)(s - scan);
+        size_t suffix_off = (size_t)(e - scan) + 1;
+        free(scan);
+        const char *suffix = suffix_off <= strlen(json_str) ? json_str + suffix_off : "";
+        size_t need = prefix_len + body_len + strlen(suffix) + 16;
+        char *out = malloc(need);
+        if (!out) return NULL;
+        snprintf(out, need, "%.*s\"sudo\":{%s}%s",
+                 (int)prefix_len, json_str, body, suffix);
+        return out;
+    }
+
+    if (json_str && strlen(json_str) > 0) {
+        /* insert ,"sudo":{...} before the document's closing '}'. */
+        const char *end = json_str + strlen(json_str) - 1;
+        while (end > json_str && (*end == ' ' || *end == '\n' ||
+               *end == '\t' || *end == '\r')) end--;
+        if (*end != '}') return NULL;
+        size_t prefix_len = (size_t)(end - json_str);
+        int empty = 1;
+        const char *open = strchr(json_str, '{');
+        if (open && open < end) {
+            for (const char *q = open + 1; q < end; q++) {
+                if (*q != ' ' && *q != '\n' && *q != '\t' && *q != '\r') {
+                    empty = 0;
+                    break;
+                }
+            }
+        }
+        size_t need = prefix_len + body_len + strlen(end) + 16;
+        char *out = malloc(need);
+        if (!out) return NULL;
+        int n = empty
+            ? snprintf(out, need, "%.*s\"sudo\":{%s}%s",
+                       (int)prefix_len, json_str, body, end)
+            : snprintf(out, need, "%.*s,\"sudo\":{%s}%s",
+                       (int)prefix_len, json_str, body, end);
+        if (n < 0 || (size_t)n >= need) { free(out); return NULL; }
+        return out;
+    }
+
+    /* fresh config */
+    size_t need = body_len + strlen(ALLTOOL_VERSION) + 64;
+    char *out = malloc(need);
+    if (!out) return NULL;
+    int n = snprintf(out, need,
+                     "{\"version\":\"%s\",\"sudo\":{%s}}",
+                     ALLTOOL_VERSION, body);
+    if (n < 0 || (size_t)n >= need) { free(out); return NULL; }
+    return out;
+}
+
+static int write_text_file(const char *config_path, const char *text) {
+    if (!config_path || !text) return -1;
+    FILE *f = fopen(config_path, "w");
+    if (!f) return -1;
+    int ok = fprintf(f, "%s", text) >= 0;
+    if (fclose(f) != 0) ok = 0;
+    return ok ? 0 : -1;
+}
+
 int alltool_sudo_cache_credentials(const char *config_path, const char *username, const char *password) {
     if (!config_path || !username || !password) return -1;
     if (!valid_username(username)) return -1;
-    char *salt = NULL;
-    if (alltool_sudo_generate_salt(&salt) != 0) return -1;
 
-    char *encrypted = NULL;
-    if (alltool_sudo_encrypt_password(password, salt, &encrypted) != 0) {
-        free(salt);
+    /* v2 record: ChaCha20 + PBKDF2-SHA256 keystore + HMAC tag, bound to
+     * `username`. On a username rename this record stops verifying and
+     * the tooling re-caches — it can never be reused by another user. */
+    char *salt = NULL, *nonce = NULL, *record_key = NULL;
+    char *encrypted = NULL, *tag = NULL;
+    if (alltool_sudo_encrypt_password_v2(password, username, 0,
+                                         &salt, &nonce, &record_key,
+                                         &encrypted, &tag) != 0) {
         return -1;
     }
 
     char *json_str = read_config_file(config_path);
-    // Exact-size allocation: existing doc + new sudo object + NUL.
-    size_t need = (json_str ? strlen(json_str) : 0)
-        + strlen(username) + strlen(encrypted) + strlen(salt) + 256;
-    char *new_json = malloc(need);
-    if (!new_json) {
-        free(json_str); free(salt); free(encrypted);
+    /* bound-checkable buffer: all fields are hex/username, so a fixed
+     * margin above the summed field lengths is safe against overflow. */
+    size_t body_len = 4 * strlen(username)
+        + strlen(salt) + strlen(nonce) + strlen(record_key)
+        + strlen(encrypted) + strlen(tag) + 256;
+    char *body = malloc(body_len);
+    if (!body) {
+        free(json_str); free(salt); free(nonce); free(record_key);
+        free(encrypted); free(tag);
         return -1;
     }
-    if (json_str && strstr(json_str, "\"sudo\"")) {
-        char *sudo_start = strstr(json_str, "\"sudo\"");
-        char *brace_start = strchr(sudo_start, '{');
-        if (!brace_start) { free(new_json); free(json_str); free(salt); free(encrypted); return -1; }
-        int depth = 0;
-        char *brace_end = brace_start;
-        while (*brace_end) {
-            if (*brace_end == '{') depth++;
-            else if (*brace_end == '}') {
-                depth--;
-                if (depth == 0) break;
-            }
-            brace_end++;
-        }
-        if (depth != 0) { free(new_json); free(json_str); free(salt); free(encrypted); return -1; }
-        size_t prefix_len = (size_t)(sudo_start - json_str);
-        const char *suffix = brace_end + 1;
-        int n = snprintf(new_json, need,
-            "%.*s\"sudo\":{\"cached\":true,\"username\":\"%s\",\"encrypted_password\":\"%s\",\"salt\":\"%s\"}%s",
-            (int)prefix_len, json_str, username, encrypted, salt, suffix);
-        if (n < 0 || (size_t)n >= need) {
-            free(new_json); free(json_str); free(salt); free(encrypted);
-            return -1;
-        }
-    } else if (json_str && strlen(json_str) > 0) {
-        // Preserve existing keys: insert ,"sudo":{...} before final '}'.
-        char *end = strrchr(json_str, '}');
-        if (!end) { free(new_json); free(json_str); free(salt); free(encrypted); return -1; }
-        size_t prefix_len = (size_t)(end - json_str);
-        // Trim trailing whitespace before '}'.
-        while (prefix_len > 0 && (json_str[prefix_len-1] == ' ' || json_str[prefix_len-1] == '\n'
-               || json_str[prefix_len-1] == '\t' || json_str[prefix_len-1] == '\r'))
-            prefix_len--;
-        int empty = 1;
-        for (size_t i = 0; i < prefix_len; i++) {
-            if (json_str[i] == '{') { empty = 1; }
-            else if (json_str[i] != ' ' && json_str[i] != '\n' && json_str[i] != '\t'
-                     && json_str[i] != '\r' && json_str[i] != '{') { empty = 0; break; }
-        }
-        // Re-scan: object is empty iff only whitespace between { and }.
-        empty = 1;
-        char *open = strchr(json_str, '{');
-        if (open) {
-            for (char *q = open + 1; q < end; q++) {
-                if (*q != ' ' && *q != '\n' && *q != '\t' && *q != '\r') { empty = 0; break; }
-            }
-        }
-        int n;
-        if (empty) {
-            n = snprintf(new_json, need, "%.*s\"sudo\":{\"cached\":true,\"username\":\"%s\",\"encrypted_password\":\"%s\",\"salt\":\"%s\"}%s",
-                (int)prefix_len, json_str, username, encrypted, salt, end);
-        } else {
-            n = snprintf(new_json, need, "%.*s,\"sudo\":{\"cached\":true,\"username\":\"%s\",\"encrypted_password\":\"%s\",\"salt\":\"%s\"}%s",
-                (int)prefix_len, json_str, username, encrypted, salt, end);
-        }
-        if (n < 0 || (size_t)n >= need) {
-            free(new_json); free(json_str); free(salt); free(encrypted);
-            return -1;
-        }
-    } else {
-        // Fresh config: version fallback mirrors `.confs.json`
-        // (see alltool_version.h; meson.build reads `.confs.json` directly).
-        int n = snprintf(new_json, need,
-            "{\"version\":\"%s\",\"sudo\":{\"cached\":true,\"username\":\"%s\",\"encrypted_password\":\"%s\",\"salt\":\"%s\"}}",
-            ALLTOOL_VERSION, username, encrypted, salt);
-        if (n < 0 || (size_t)n >= need) {
-            free(new_json); free(json_str); free(salt); free(encrypted);
-            return -1;
-        }
-    }
-
-    FILE *f = fopen(config_path, "w");
-    if (!f) {
-        free(new_json);
-        free(json_str);
-        free(salt);
-        free(encrypted);
+    int n = snprintf(body, body_len,
+        "\"cached\":true,\"scheme\":\"%s\",\"username\":\"%s\","
+        "\"iterations\":%u,\"salt\":\"%s\",\"nonce\":\"%s\","
+        "\"record_key\":\"%s\",\"encrypted_password\":\"%s\",\"auth_tag\":\"%s\"",
+        ALLTOOL_SUDO_SCHEME_V2, username, ALLTOOL_SUDO_DEFAULT_ITERS,
+        salt, nonce, record_key, encrypted, tag);
+    if (n < 0 || (size_t)n >= body_len) {
+        free(json_str); free(body); free(salt); free(nonce); free(record_key);
+        free(encrypted); free(tag);
         return -1;
     }
 
-    fprintf(f, "%s", new_json);
-    fclose(f);
+    char *new_json = json_with_sudo_body(json_str, body);
+    free(json_str); free(body);
 
+    int rc = -1;
+    if (new_json && write_text_file(config_path, new_json) == 0) {
+        rc = 0;
+    }
+
+    /*Wipe key-bearing transient strings before they hit the heap for free() */
+    secure_zero(salt, strlen(salt));
+    secure_zero(record_key, strlen(record_key));
     secure_zero(encrypted, strlen(encrypted));
+    secure_zero(tag, strlen(tag));
+    free(salt); free(nonce); free(record_key);
+    free(encrypted); free(tag);
     free(new_json);
-    free(json_str);
-    free(salt);
-    free(encrypted);
-    return 0;
+    return rc;
+}
+
+/* Extract an unsigned int value of `key` inside the sudo object body. */
+static int sudo_block_uint(char *sudo_start, char *sudo_end,
+                           const char *key, unsigned int *out) {
+    if (!sudo_start || !sudo_end || !key || !out) return -1;
+    size_t klen = strlen(key);
+    char pat[96];
+    snprintf(pat, sizeof(pat), "\"%s\"", key);
+    char *p = sudo_start;
+    while (p && p < sudo_end) {
+        p = strstr(p, pat);
+        if (!p || p >= sudo_end) return -1;
+        /* key must not be inside another word: preceding char is ',' '{' */
+        char prev = (p > sudo_start) ? p[-1] : '{';
+        (void)prev;
+        p = strchr(p + klen, ':');
+        if (!p || p > sudo_end) return -1;
+        p++;
+        while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+        if (p > sudo_end) return -1;
+        unsigned long v = 0;
+        if (*p >= '0' && *p <= '9') {
+            char *endp = NULL;
+            v = strtoul(p, &endp, 10);
+            if (endp && endp != p) {
+                *out = (unsigned int)v;
+                return 0;
+            }
+        }
+        return -1;
+    }
+    return -1;
 }
 
 int alltool_sudo_load_credentials(const char *config_path, alltool_sudo_creds_t *creds) {
@@ -614,9 +1069,21 @@ int alltool_sudo_load_credentials(const char *config_path, alltool_sudo_creds_t 
         return -1;
     }
 
-    char *username = strstr(json_str, "\"username\"");
-    char *encrypted = strstr(json_str, "\"encrypted_password\"");
-    char *salt = strstr(json_str, "\"salt\"");
+    /* All record fields are searched *inside* the sudo block, so the
+     * top-level "username" cannot shadow the record's owner. */
+    char *sudo_start = NULL, *sudo_end = NULL;
+    if (find_sudo_object(json_str, &sudo_start, &sudo_end) != 0) {
+        free(json_str);
+        return -1;
+    }
+
+    char *username = strstr_range(sudo_start, sudo_end, "\"username\"");
+    char *encrypted = strstr_range(sudo_start, sudo_end, "\"encrypted_password\"");
+    char *salt = strstr_range(sudo_start, sudo_end, "\"salt\"");
+    char *scheme = strstr_range(sudo_start, sudo_end, "\"scheme\"");
+    char *nonce = strstr_range(sudo_start, sudo_end, "\"nonce\"");
+    char *tag = strstr_range(sudo_start, sudo_end, "\"auth_tag\"");
+    char *record_key = strstr_range(sudo_start, sudo_end, "\"record_key\"");
 
     if (!username || !encrypted || !salt) {
         free(json_str);
@@ -626,6 +1093,13 @@ int alltool_sudo_load_credentials(const char *config_path, alltool_sudo_creds_t 
     creds->username = extract_json_value(username);
     creds->encrypted_password = extract_json_value(encrypted);
     creds->salt = extract_json_value(salt);
+    /* absent scheme == legacy v1 record (upgraded automatically later) */
+    creds->scheme = scheme ? extract_json_value(scheme) : NULL;
+    creds->nonce = nonce ? extract_json_value(nonce) : NULL;
+    creds->auth_tag = tag ? extract_json_value(tag) : NULL;
+    creds->record_key = record_key ? extract_json_value(record_key) : NULL;
+    creds->iterations = 0;
+    sudo_block_uint(sudo_start, sudo_end, "iterations", &creds->iterations);
     creds->cached = true;
 
     free(json_str);
@@ -663,6 +1137,10 @@ void alltool_sudo_free_creds(alltool_sudo_creds_t *creds) {
     free(creds->username);
     free(creds->encrypted_password);
     free(creds->salt);
+    free(creds->scheme);
+    free(creds->nonce);
+    free(creds->auth_tag);
+    free(creds->record_key);
     memset(creds, 0, sizeof(alltool_sudo_creds_t));
 }
 
@@ -671,39 +1149,115 @@ int alltool_sudo_clear_cache(const char *config_path) {
     char *json_str = read_config_file(config_path);
     if (!json_str) return -1;
 
-    char *sudo_start = strstr(json_str, "\"sudo\"");
-    if (sudo_start) {
-        char *brace_start = strchr(sudo_start, '{');
-        if (!brace_start) { free(json_str); return -1; }
-        int depth = 0;
-        char *brace_end = brace_start;
-        while (*brace_end) {
-            if (*brace_end == '{') depth++;
-            else if (*brace_end == '}') {
-                depth--;
-                if (depth == 0) break;
-            }
-            brace_end++;
-        }
-        if (depth != 0) { free(json_str); return -1; }
-        size_t prefix_len = (size_t)(sudo_start - json_str);
-        const char *suffix = brace_end + 1;
-        size_t need = prefix_len + strlen(suffix) + 128;
-        char *new_json = malloc(need);
-        if (!new_json) { free(json_str); return -1; }
-        int n = snprintf(new_json, need,
-            "%.*s\"sudo\":{\"cached\":false,\"username\":\"\",\"encrypted_password\":\"\",\"salt\":\"\"}%s",
-            (int)prefix_len, json_str, suffix);
-        if (n < 0 || (size_t)n >= need) { free(new_json); free(json_str); return -1; }
+    char *new_json = json_with_sudo_body(json_str,
+        "\"cached\":false,\"scheme\":\"\",\"username\":\"\",\"iterations\":0,"
+        "\"salt\":\"\",\"nonce\":\"\",\"record_key\":\"\","
+        "\"encrypted_password\":\"\",\"auth_tag\":\"\"");
 
-        FILE *f = fopen(config_path, "w");
-        if (f) {
-            fprintf(f, "%s", new_json);
-            fclose(f);
-        }
-        free(new_json);
+    int rc = new_json ? write_text_file(config_path, new_json) : -1;
+
+    free(new_json);
+    free(json_str);
+    return rc;
+}
+
+/* ------------------------------------------------------------------ *
+ * Legacy v1 recovery + unified run path.                                */
+
+/* Inverse of alltool_sudo_encrypt_password: the legacy blob is
+ * password XOR salt (repeating), hex-encoded — recoverable only with
+ * the very salt stored beside it, which binds this function to record
+ * migration, never new records. */
+static int legacy_v1_decrypt(const char *encrypted_hex, const char *salt_hex,
+                             char **password_out) {
+    if (!encrypted_hex || !salt_hex || !password_out) return -1;
+    size_t hex_len = strlen(encrypted_hex);
+    if (hex_len == 0 || hex_len % 2 != 0) return -1;
+    size_t ct_len = hex_len / 2;
+    unsigned char bin_salt[SALT_LENGTH];
+    if (hex_to_bin(salt_hex, bin_salt, SALT_LENGTH) != 0) return -1;
+
+    unsigned char *ct = malloc(ct_len);
+    char *pw = malloc(ct_len + 1);
+    if (!ct || !pw) { free(ct); free(pw); return -1; }
+    if (alltool_hex_decode(encrypted_hex, ct, ct_len) != 0) {
+        alltool_secure_zero(ct, ct_len);
+        alltool_secure_zero(pw, ct_len + 1);
+        free(ct); free(pw);
+        return -1;
+    }
+    size_t max_salt = strlen(salt_hex) / 2;
+    for (size_t i = 0; i < ct_len; i++) {
+        unsigned char salt_byte = bin_salt[i % (max_salt ? max_salt : 1)];
+        pw[i] = (char)(ct[i] ^ salt_byte);
+    }
+    pw[ct_len] = '\0';
+    (void)max_salt;
+
+    alltool_secure_zero(ct, ct_len);
+    free(ct);
+    *password_out = pw;
+    return 0;
+}
+
+int alltool_sudo_run_cached(const char *config_path, const char *command, char **output) {
+    if (!config_path || !command || !output) return -1;
+    *output = NULL;
+
+    alltool_sudo_creds_t creds;
+    if (alltool_sudo_load_credentials(config_path, &creds) != 0 || !creds.cached) {
+        return -1;
     }
 
-    free(json_str);
-    return 0;
+    int legacy = (creds.scheme == NULL || strcmp(creds.scheme, ALLTOOL_SUDO_SCHEME_V2) != 0);
+    char *password = NULL;
+    int rc = -1;
+
+    if (legacy) {
+        /* v1: XOR-inverse recover + verify round-trip against the
+         * stored blob (catches truncated/corrupt legacy records). */
+        if (legacy_v1_decrypt(creds.encrypted_password, creds.salt, &password) != 0) {
+            alltool_sudo_free_creds(&creds);
+            return -1;
+        }
+        if (alltool_sudo_verify_password(creds.encrypted_password, creds.salt, password) != 0) {
+            secure_zero(password, strlen(password));
+            free(password);
+            alltool_sudo_free_creds(&creds);
+            return -1;
+        }
+    } else {
+        /* v2: HMAC tag first (integrity + username binding), then
+         * ChaCha20 recovery. Wrong owner = tag mismatch = refusal. */
+        if (alltool_sudo_decrypt_password_v2(creds.encrypted_password, creds.salt,
+                                             creds.nonce, creds.auth_tag,
+                                             creds.iterations, creds.username,
+                                             creds.record_key,
+                                             &password) != 0) {
+            alltool_sudo_free_creds(&creds);
+            return -2; /* caller should self-heal (username changed?) */
+        }
+    }
+
+    if (*password == '\0') {
+        /* empty password would still be written to sudo; treat as broken */
+        secure_zero(password, 1);
+        free(password);
+        alltool_sudo_free_creds(&creds);
+        return -1;
+    }
+
+    rc = alltool_sudo_run_with_creds(creds.username, password, command, output);
+
+    /* Transparent upgrade: a successful legacy run gets re-recorded in
+     * the current scheme (bound to username, tamper-checked). */
+    if (legacy && rc == 0) {
+        alltool_sudo_cache_credentials(config_path, creds.username, password);
+    }
+
+    secure_zero(password, strlen(password));
+    free(password);
+    password = NULL;
+    alltool_sudo_free_creds(&creds);
+    return rc;
 }

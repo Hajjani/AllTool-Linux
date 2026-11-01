@@ -22,7 +22,8 @@ pthread_dep = dependency('threads')
 
 shm_sources = ['alltool_shm.c']
 compiler_sources = ['alltool_compiler.c']
-sudo_sources = ['alltool_sudo.c']
+crypto_sources = ['alltool_crypto.c']
+sudo_sources = ['alltool_sudo.c', 'alltool_crypto.c']
 runner_sources = ['alltool_runner.c']
 
 alltool_shm_lib = shared_library('alltool_shm', shm_sources,

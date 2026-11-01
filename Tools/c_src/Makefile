@@ -7,7 +7,7 @@ PREFIX ?= $(HOME)/.config/alltool/bin
 
 SHM_SOURCES = alltool_shm.c
 COMPILER_SOURCES = alltool_compiler.c
-SUDO_SOURCES = alltool_sudo.c
+SUDO_SOURCES = alltool_sudo.c alltool_crypto.c
 RUNNER_SOURCES = alltool_runner.c
 
 SHM_LIB = liballtool_shm.so
@@ -24,9 +24,9 @@ $(COMPILER_LIB): $(COMPILER_SOURCES)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LIBS)
 
 $(SUDO_LIB): $(SUDO_SOURCES)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< $(LIBS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ $(LIBS)
 
-$(RUNNER_BIN): $(RUNNER_SOURCES) $(SHM_LIB) $(COMPILER_LIB) $(SUDO_LIB)
+$(RUNNER_BIN): $(RUNNER_SOURCES)
 	$(CC) $(CFLAGS) -o $@ $< -L. -lalltool_shm -lalltool_compiler -lalltool_sudo $(LIBS) -Wl,-rpath,'$$ORIGIN'
 
 install: all

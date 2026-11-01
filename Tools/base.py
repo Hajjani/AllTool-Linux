@@ -107,27 +107,71 @@ class ToolBase:
 
     def sudo_run(self, cmd: List[str], cache: bool = False) -> subprocess.CompletedProcess:
         if cache:
+            # `.confs.json` is the single source of truth for the record:
+            # always the canonical per-user path, never a config-relative
+            # guess (home_dir may point into another user's tree).
             try:
-                creds = self.sudo.load_credentials(str(self.home_dir / ".confs.json"))
+                conf_path = str(self.conf_path)
+            except Exception:
+                conf_path = str(self.home_dir / ".confs.json")
+            try:
+                creds = self.sudo.load_credentials(conf_path)
             except Exception:
                 creds = None
             if creds and creds.get("cached"):
+                # Username-change resilience: a record owned by another
+                # account (or from before a rename) must not run `sudo -u
+                # someone-else`. Detect, self-heal (clear), fall back.
                 try:
-                    return self._run_with_cached_sudo(cmd, creds)
-                except RuntimeError:
-                    pass  # C lib missing: fall back to plain sudo below.
+                    from .identity import current_username
+
+                    me = current_username()
+                except Exception:
+                    me = ""
+                stored = str(creds.get("username", "") or "")
+                if me and stored and stored != me:
+                    self.print_status(
+                        "Cached sudo credentials belong to '%s' but current "
+                        "user is '%s' — clearing stale cache." % (stored, me),
+                        "🔄",
+                    )
+                    self.sudo.clear_cache(conf_path)
+                else:
+                    try:
+                        return self._run_with_cached_sudo(cmd, conf_path)
+                    except RuntimeError:
+                        pass  # record rejected or C lib missing: plain sudo below.
 
         full_cmd = ["sudo"] + cmd
         return self.run_cmd(full_cmd)
 
-    def _run_with_cached_sudo(self, cmd: List[str], creds: dict) -> subprocess.CompletedProcess:
+    @property
+    def conf_path(self) -> Path:
+        """Canonical `.confs.json` location for the current OS user."""
+        try:
+            from .version import user_conf_path
+
+            return user_conf_path()
+        except Exception:
+            return self.home_dir / ".confs.json"
+
+    def _run_with_cached_sudo(self, cmd: List[str], conf_path: str) -> subprocess.CompletedProcess:
         import shlex
         sudo_cmd = " ".join(shlex.quote(str(c)) for c in cmd)
-        ret, stdout = self.sudo.run_with_creds(
-            creds["username"],
-            creds["encrypted_password"],
-            sudo_cmd
-        )
+        ret, stdout = self.sudo.run_cached(conf_path, sudo_cmd)
+        if ret == -2:
+            # C-level tag verification failed: the record is corrupted,
+            # tampered with, or owned by a different username. Self-heal
+            # (drop the record) and let the caller fall back to plain sudo.
+            self.print_status(
+                "Cached sudo record failed verification — clearing stale cache.",
+                "🔄",
+            )
+            try:
+                self.sudo.clear_cache(conf_path)
+            except Exception:
+                pass
+            raise RuntimeError("cached sudo record rejected")
         result = subprocess.CompletedProcess(cmd, ret)
         result.stdout = stdout
         return result

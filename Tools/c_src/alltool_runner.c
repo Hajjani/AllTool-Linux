@@ -73,24 +73,24 @@ static int run_process_chain(alltool_process_t *processes, int count) {
             }
 
             if (processes[i].needs_sudo) {
-                alltool_sudo_creds_t creds;
                 char config_path[PATH_MAX];
                 get_config_path(config_path, sizeof(config_path));
-                if (alltool_sudo_load_credentials(config_path, &creds) == 0) {
-                    char *output = NULL;
-                    char full_cmd[2048];
-                    snprintf(full_cmd, sizeof(full_cmd), "%s", processes[i].command);
-                    for (int j = 0; j < processes[i].argc; j++) {
-                        strncat(full_cmd, " ", sizeof(full_cmd) - strlen(full_cmd) - 1);
-                        strncat(full_cmd, processes[i].args[j], sizeof(full_cmd) - strlen(full_cmd) - 1);
-                    }
-                    int ret = alltool_sudo_run_with_creds(creds.username, creds.encrypted_password, full_cmd, &output);
-                    alltool_sudo_free_creds(&creds);
-                    if (output) free(output);
-                    alltool_shm_mark_done(&child_ctx, ret);
-                    alltool_shm_detach(&child_ctx);
-                    _exit(ret);
+                char *output = NULL;
+                char full_cmd[2048];
+                snprintf(full_cmd, sizeof(full_cmd), "%s", processes[i].command);
+                for (int j = 0; j < processes[i].argc; j++) {
+                    strncat(full_cmd, " ", sizeof(full_cmd) - strlen(full_cmd) - 1);
+                    strncat(full_cmd, processes[i].args[j], sizeof(full_cmd) - strlen(full_cmd) - 1);
                 }
+                /* One entry point: loads the record from `.confs.json`,
+                 * verifies/decrypts (v1 legacy recover-or-v2 tag check)
+                 * and upgrades a legacy record in place. Cleartext never
+                 * leaves this call. */
+                int ret = alltool_sudo_run_cached(config_path, full_cmd, &output);
+                if (output) free(output);
+                alltool_shm_mark_done(&child_ctx, ret);
+                alltool_shm_detach(&child_ctx);
+                _exit(ret);
             } else {
                 execvp(processes[i].command, (char *const *)processes[i].args);
                 perror("execvp");
@@ -166,13 +166,15 @@ int main(int argc, char **argv) {
 
     if (strcmp(argv[1], "sudo-cache") == 0) {
         char *username = NULL, *password = NULL;
-        if (alltool_sudo_prompt_credentials("Enter sudo password to cache", &username, &password) == 0) {
+        char config_path[PATH_MAX];
+        get_config_path(config_path, sizeof(config_path));
+        /* Username is resolved from `.confs.json` first — the config file
+         * is the single source of truth; $USER is only a fallback. */
+        if (alltool_sudo_prompt_credentials_conf("Enter sudo password to cache", config_path, &username, &password) == 0) {
             printf("Cache password for future use? (y/N): ");
             fflush(stdout);
             char response[16];
             if (fgets(response, sizeof(response), stdin) && (response[0] == 'y' || response[0] == 'Y')) {
-                char config_path[PATH_MAX];
-                get_config_path(config_path, sizeof(config_path));
                 alltool_sudo_cache_credentials(config_path, username, password);
                 printf("Credentials cached securely.\n");
             }

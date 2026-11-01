@@ -47,6 +47,7 @@ __all__ = [
     "AllToolSHM",
     "AllToolCompiler",
     "AllToolSudo",
+    "user_conf_path",
 ]
 
 
@@ -126,6 +127,11 @@ class SudoCreds(ctypes.Structure):
         ("username", ctypes.c_char_p),
         ("encrypted_password", ctypes.c_char_p),
         ("salt", ctypes.c_char_p),
+        ("scheme", ctypes.c_char_p),
+        ("nonce", ctypes.c_char_p),
+        ("auth_tag", ctypes.c_char_p),
+        ("record_key", ctypes.c_char_p),
+        ("iterations", ctypes.c_uint),
         ("cached", ctypes.c_bool),
     ]
 
@@ -211,8 +217,6 @@ def _setup_sudo_bindings(lib):
     lib.alltool_sudo_verify_password.restype = ctypes.c_int
     lib.alltool_sudo_generate_salt.argtypes = [ctypes.POINTER(ctypes.c_char_p)]
     lib.alltool_sudo_generate_salt.restype = ctypes.c_int
-    lib.alltool_sudo_run_with_creds.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p)]
-    lib.alltool_sudo_run_with_creds.restype = ctypes.c_int
     lib.alltool_sudo_cache_credentials.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p]
     lib.alltool_sudo_cache_credentials.restype = ctypes.c_int
     lib.alltool_sudo_load_credentials.argtypes = [ctypes.c_char_p, ctypes.POINTER(SudoCreds)]
@@ -221,6 +225,14 @@ def _setup_sudo_bindings(lib):
     lib.alltool_sudo_free_creds.restype = None
     lib.alltool_sudo_clear_cache.argtypes = [ctypes.c_char_p]
     lib.alltool_sudo_clear_cache.restype = ctypes.c_int
+    lib.alltool_sudo_run_cached.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p)]
+    lib.alltool_sudo_run_cached.restype = ctypes.c_int
+    lib.alltool_sudo_prompt_credentials_conf.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_char_p)]
+    lib.alltool_sudo_prompt_credentials_conf.restype = ctypes.c_int
+    lib.alltool_sudo_encrypt_password_v2.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint] + [ctypes.POINTER(ctypes.c_char_p)] * 5
+    lib.alltool_sudo_encrypt_password_v2.restype = ctypes.c_int
+    lib.alltool_sudo_decrypt_password_v2.argtypes = [ctypes.c_char_p] * 4 + [ctypes.c_uint, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p)]
+    lib.alltool_sudo_decrypt_password_v2.restype = ctypes.c_int
 
 
 @dataclass
@@ -423,12 +435,19 @@ class AllToolSudo:
     def available(self) -> bool:
         return self._lib is not None
 
-    def run_with_creds(self, username: str, encrypted_password: str, command: str) -> tuple:
+    def run_cached(self, config_path: str, command: str) -> tuple:
+        """Run `sudo <command>` with the credentials stored in `.confs.json`.
+
+        The C side loads/verifies/decrypts the record (v1 legacies get
+        recovered; v2 is HMAC-tag-verified and owner-bound), so cleartext
+        never crosses the Python boundary. Raises RuntimeError when the
+        C library is missing (callers fall back to plain sudo).
+        """
         if self._lib is None:
             raise RuntimeError("sudo C library not available")
         output = ctypes.c_char_p()
-        ret = self._lib.alltool_sudo_run_with_creds(
-            username.encode(), encrypted_password.encode(), command.encode(), ctypes.byref(output)
+        ret = self._lib.alltool_sudo_run_cached(
+            str(config_path).encode(), command.encode(), ctypes.byref(output)
         )
         stdout = output.value.decode() if output.value else ""
         if output.value:
@@ -459,17 +478,23 @@ class AllToolSudo:
             return False
         return self._lib.alltool_sudo_cache_credentials(config_path.encode(), username.encode(), password.encode()) == 0
 
-    def load_credentials(self, config_path: str) -> Optional[Dict[str, str]]:
+    def load_credentials(self, config_path: str) -> Optional[Dict[str, Any]]:
         if self._lib is not None:
             creds = SudoCreds()
             ret = self._lib.alltool_sudo_load_credentials(config_path.encode(), ctypes.byref(creds))
             if ret != 0:
                 return None
             try:
+                scheme = creds.scheme.decode() if creds.scheme else "v1"
                 return {
                     "username": creds.username.decode() if creds.username else "",
                     "encrypted_password": creds.encrypted_password.decode() if creds.encrypted_password else "",
                     "salt": creds.salt.decode() if creds.salt else "",
+                    "scheme": scheme,
+                    "nonce": creds.nonce.decode() if creds.nonce else "",
+                    "auth_tag": creds.auth_tag.decode() if creds.auth_tag else "",
+                    "record_key": creds.record_key.decode() if creds.record_key else "",
+                    "iterations": int(creds.iterations),
                     "cached": creds.cached,
                 }
             finally:
@@ -480,10 +505,17 @@ class AllToolSudo:
                 conf = json.load(f)
             sudo = conf.get("sudo")
             if isinstance(sudo, dict) and sudo.get("cached"):
-                return {"username": sudo.get("username", ""),
-                        "encrypted_password": sudo.get("encrypted_password", ""),
-                        "salt": sudo.get("salt", ""),
-                        "cached": True}
+                return {
+                    "username": sudo.get("username", ""),
+                    "encrypted_password": sudo.get("encrypted_password", ""),
+                    "salt": sudo.get("salt", ""),
+                    "scheme": sudo.get("scheme", "") or "v1",
+                    "nonce": sudo.get("nonce", ""),
+                    "auth_tag": sudo.get("auth_tag", ""),
+                    "record_key": sudo.get("record_key", ""),
+                    "iterations": int(sudo.get("iterations", 0) or 0),
+                    "cached": True,
+                }
         except (OSError, ValueError):
             pass
         return None

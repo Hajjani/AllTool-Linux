@@ -47,3 +47,10 @@ curl -fsSL https://raw.githubusercontent.com/Hajjani/AllTool-Linux/refs/heads/St
   install them on the spot.
 - The installer lets you pick optional packages by number
   (`> 1,2,5`, ranges like `1-3`, `all`, or `none`).
+- Cached sudo credentials live in `.confs.json` (single source of truth)
+  under scheme `v2`: the password is ChaCha20-encrypted under a key
+  derived with PBKDF2-HMAC-SHA256 from a per-record random key bound to
+  your username, with an HMAC-SHA256 tag. Renaming your user invalidates
+  the old record automatically (self-heal: the tool detects the owner
+  mismatch, clears the stale cache and re-caches on next sudo run);
+  legacy `v1` XOR records are upgraded in place on first use.

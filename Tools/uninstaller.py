@@ -15,8 +15,9 @@ def uninstall(args: list):
 
     # Clear cached sudo credentials first (same as Makefile uninstall's
     # `alltool_runner sudo-clear`), via C lib when built, else JSON fallback.
+    # Uses the canonical per-user `.confs.json` — the single source of truth.
     try:
-        tool.sudo.clear_cache(str(HOME_DIR / ".confs.json"))
+        tool.sudo.clear_cache(str(tool.conf_path))
     except Exception:
         pass
 
@@ -24,7 +25,10 @@ def uninstall(args: list):
         installed_files = get_installed_files()
     except Exception:
         installed_files = []
-    config_path = HOME_DIR / ".confs.json"
+    try:
+        config_path = tool.conf_path
+    except Exception:
+        config_path = HOME_DIR / ".confs.json"
 
     if config_path.exists():
         try:
