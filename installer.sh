@@ -3,7 +3,7 @@ set -e
 
 REPO_URL="https://github.com/Hajjani/AllTool-Linux.git"
 INSTALL_DIR="$HOME/bin"
-SCRIPT_NAME="AllTools.py"
+SCRIPT_NAME="AllTool.py"
 ENTRY_POINT="alltool"
 
 echo "🚀 AllTool-Linux Installer"
