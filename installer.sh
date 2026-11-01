@@ -312,13 +312,21 @@ done
 
 if [ ${#MISSING_CMDS[@]} -gt 0 ]; then
     echo "⚠️  The following optional commands are not installed:"
-    printf '  %s\n' "${MISSING_CMDS[@]}"
+    for cmd in "${MISSING_CMDS[@]}"; do
+        pkg="$(pkg_for_command "$cmd")"
+        case "$DISTRO" in
+            debian) install_cmd="sudo apt install $pkg" ;;
+            arch) install_cmd="sudo pacman -S $pkg" ;;
+            fedora) install_cmd="sudo dnf install $pkg" ;;
+            opensuse) install_cmd="sudo zypper install $pkg" ;;
+            *) install_cmd="install $pkg" ;;
+        esac
+        printf '  - %-15s (install: %s)\n' "$cmd" "$install_cmd"
+    done
     echo "Some AllTool features will not work without them."
     echo "Run 'alltool requirement' to see what each command needs."
 
-    # Offer to install them on the spot, reusing the numbered picker above.
-    # -y installs everything, --no-optional / non-TTY skips (same policy as
-    # the optional-package stage).
+    # Offer to install them on the spot.
     if [[ "$INSTALL_ALL_OPTIONAL" != "true" ]] && { [[ "$SKIP_OPTIONAL" == "true" ]] || [[ ! -t 0 ]]; }; then
         echo "ℹ️  Skipping on-the-spot install of missing commands (non-interactive or --no-optional)."
     else
