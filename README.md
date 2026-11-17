@@ -62,7 +62,7 @@ AllTool ships an extension system in `AllTool-Linux/extentions/` (and per-user `
 
 Every extension **must** declare a module-level `ALLTOOL_VER` (`str`) — the required alltool version (exact `"3.2.0"` or specifier `">=3.2.0"` / `"~=3.2"`). It is checked against the single source of truth — the `"version"` key of `.confs.json`. Extensions that fail validation are skipped with a warning; they never silently register commands.
 
-## Developer API (single import)
+## Developer API
 
 All developer-facing helpers are re-exported from the `Tools` package, so you never retype a submodule path:
 
